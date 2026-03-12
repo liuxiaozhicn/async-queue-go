@@ -11,7 +11,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/liuxiaozhicn/async-queue-go/pkg/asyncqueue"
 	"github.com/redis/go-redis/v9"
 )
@@ -64,11 +63,7 @@ func main() {
 	configFile := flag.String("config", "config.json", "config file path")
 	flag.Parse()
 
-	mr, err := miniredis.Run()
-	if err != nil {
-		log.Fatal(err)
-	}
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
 	s, err := asyncqueue.LoadServer(*configFile, client)

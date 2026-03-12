@@ -3,7 +3,6 @@ package asyncqueue
 import (
 	"bytes"
 	"context"
-	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"log"
 	"os"
@@ -31,11 +30,7 @@ func TestDefault_NilBeforeNewServer(t *testing.T) {
 
 func TestDefault_SetDefault(t *testing.T) {
 	resetDefault(t)
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatal(err)
-	}
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 	s, err := NewServer(minimalConfig(), client)
 	if err != nil {
@@ -80,11 +75,7 @@ func (j *testDefaultJob) Handle(_ context.Context) (Result, error) { return ACK,
 func TestSetDefaultWithWarn_Overwrite(t *testing.T) {
 	resetDefault(t)
 
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatal(err)
-	}
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
 	s1, err := NewServer(minimalConfig(), client)
@@ -115,11 +106,7 @@ func TestSetDefaultWithWarn_Overwrite(t *testing.T) {
 
 func TestDefault_NewServerSetsGlobal(t *testing.T) {
 	resetDefault(t)
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatal(err)
-	}
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
 	s, err := NewServer(minimalConfig(), client)
@@ -133,11 +120,7 @@ func TestDefault_NewServerSetsGlobal(t *testing.T) {
 
 func TestDefault_NewServerOverwritesGlobal(t *testing.T) {
 	resetDefault(t)
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatal(err)
-	}
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 	s1, _ := NewServer(minimalConfig(), client)
 	s2, _ := NewServer(minimalConfig(), client)
@@ -149,11 +132,7 @@ func TestDefault_NewServerOverwritesGlobal(t *testing.T) {
 
 func TestDefault_StopClearsGlobal(t *testing.T) {
 	resetDefault(t)
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatal(err)
-	}
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 	s, err := NewServer(minimalConfig(), client)
 	if err != nil {
@@ -175,11 +154,7 @@ func TestDefault_StopClearsGlobal(t *testing.T) {
 
 func TestDefault_StopNonDefaultDoesNotClearGlobal(t *testing.T) {
 	resetDefault(t)
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatal(err)
-	}
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 	s1, _ := NewServer(minimalConfig(), client)
 	s2, _ := NewServer(minimalConfig(), client) // s2 is now the global

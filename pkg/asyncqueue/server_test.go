@@ -3,7 +3,6 @@ package asyncqueue
 import (
 	"context"
 	"encoding/json"
-	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"os"
 	"path/filepath"
@@ -30,11 +29,7 @@ func (j *bindTestJob2) Handle(ctx context.Context) (Result, error) {
 }
 
 func TestServerLoadAndLifecycle(t *testing.T) {
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatal(err)
-	}
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 	t.Run("load server from config file", func(t *testing.T) {
 		tmpDir := t.TempDir()
@@ -168,11 +163,7 @@ type initTestJobs struct {
 }
 
 func TestServerRun(t *testing.T) {
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatal(err)
-	}
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 	t.Run("run with registry merges handlers before start", func(t *testing.T) {
 		s, err := NewServer(&Config{Queues: map[string]QueueConfig{}}, client)
@@ -220,11 +211,7 @@ func TestServerRun(t *testing.T) {
 }
 
 func TestServerBind(t *testing.T) {
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatal(err)
-	}
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 	t.Run("bind registers handler using GetType as queue name", func(t *testing.T) {
 		s, err := NewServer(&Config{Queues: map[string]QueueConfig{}}, client)

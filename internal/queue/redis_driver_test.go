@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/liuxiaozhicn/async-queue-go/internal/core"
 	"github.com/redis/go-redis/v9"
 )
@@ -21,17 +20,12 @@ func (f *fakeClock) Now() time.Time {
 
 func newDriverForTest(t *testing.T) (*RedisDriver, *fakeClock, func()) {
 	t.Helper()
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatal(err)
-	}
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 	fc := &fakeClock{now: time.Unix(1700000000, 0)}
 	d := NewRedisDriverWithClock(client, "test", 1, 1, []int{1, 2, 3}, fc)
 	cleanup := func() {
 		_ = client.Close()
-		mr.Close()
 	}
 	return d, fc, cleanup
 }

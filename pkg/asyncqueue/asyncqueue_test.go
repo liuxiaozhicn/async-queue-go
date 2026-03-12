@@ -5,18 +5,11 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 )
 
 func TestQueuePushMessageAndInfo(t *testing.T) {
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer mr.Close()
-
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
 	q, err := NewAsyncQueue(client, "{kit-test}", 1, 1, []int{1, 2}, 3)
@@ -45,13 +38,8 @@ func TestQueuePushMessageAndInfo(t *testing.T) {
 }
 
 func TestWorkerConsumesMessage(t *testing.T) {
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer mr.Close()
 
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
 	q, err := NewAsyncQueue(client, "{kit-worker}", 1, 1, []int{1}, 3)
@@ -102,13 +90,7 @@ func TestWorkerConsumesMessage(t *testing.T) {
 }
 
 func TestQueuePushJobAndInfo(t *testing.T) {
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer mr.Close()
-
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
 	q, err := NewAsyncQueue(client, "kit-pushjob", 1, 1, []int{1, 2}, 3)
@@ -149,13 +131,7 @@ func TestQueuePushJobAndInfo(t *testing.T) {
 }
 
 func TestQueuePushJobNilJob(t *testing.T) {
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer mr.Close()
-
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
 	q, err := NewAsyncQueue(client, "{kit-pushjob-nil}", 1, 1, []int{1}, 3)
@@ -172,13 +148,7 @@ func TestQueuePushJobNilJob(t *testing.T) {
 }
 
 func TestWorkerConsumesJobMessage(t *testing.T) {
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer mr.Close()
-
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
 	q, err := NewAsyncQueue(client, "{kit-worker-job}", 1, 1, []int{1}, 3)

@@ -5,18 +5,11 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 )
 
 func TestQueueDeleteJob(t *testing.T) {
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer mr.Close()
-
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
 	q, err := NewAsyncQueue(client, "test-delete-job", 1, 1, []int{1}, 3)
@@ -65,13 +58,7 @@ func TestQueueDeleteJob(t *testing.T) {
 }
 
 func TestQueueDeleteJobNilJob(t *testing.T) {
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer mr.Close()
-
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
 	q, err := NewAsyncQueue(client, "test-delete-nil", 1, 1, []int{1}, 3)
@@ -93,13 +80,8 @@ func TestQueueDeleteJobNilJob(t *testing.T) {
 }
 
 func TestQueueDeleteMessage(t *testing.T) {
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer mr.Close()
 
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
 	q, err := NewAsyncQueue(client, "test-delete-message", 1, 1, []int{1}, 3)
@@ -149,13 +131,7 @@ func TestQueueDeleteMessage(t *testing.T) {
 }
 
 func TestQueueDeleteMessageNilMessage(t *testing.T) {
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer mr.Close()
-
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
 	q, err := NewAsyncQueue(client, "test-delete-nil-msg", 1, 1, []int{1}, 3)
@@ -177,13 +153,7 @@ func TestQueueDeleteMessageNilMessage(t *testing.T) {
 }
 
 func TestQueueDeleteJobWithDelay(t *testing.T) {
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer mr.Close()
-
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
 	q, err := NewAsyncQueue(client, "test-delete-delayed", 1, 1, []int{1}, 3)
@@ -232,13 +202,7 @@ func TestQueueDeleteJobWithDelay(t *testing.T) {
 }
 
 func TestQueueDeleteNonExistentJob(t *testing.T) {
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer mr.Close()
-
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
 	q, err := NewAsyncQueue(client, "test-delete-nonexistent", 1, 1, []int{1}, 3)
@@ -264,13 +228,7 @@ func TestQueueDeleteNonExistentJob(t *testing.T) {
 }
 
 func TestQueueDeleteMultipleJobs(t *testing.T) {
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer mr.Close()
-
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
 	q, err := NewAsyncQueue(client, "test-delete-multiple", 1, 1, []int{1}, 3)
