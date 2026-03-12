@@ -14,10 +14,9 @@ import (
 type Result string
 
 const (
-	ACK     Result = Result(core.ACK)
-	RETRY   Result = Result(core.RETRY)
-	REQUEUE Result = Result(core.REQUEUE)
-	DROP    Result = Result(core.DROP)
+	ACK   Result = Result(core.ACK)
+	RETRY Result = Result(core.RETRY)
+	DROP  Result = Result(core.DROP)
 )
 
 type Message struct {
@@ -53,12 +52,6 @@ func NewAsyncQueue(client redis.UniversalClient, channel string, timeoutSeconds 
 
 	driver := queue.NewRedisDriver(client, channel, timeoutSeconds, handleTimeoutSeconds, retrySeconds)
 	return &Queue{client: client, driver: driver, maxAttempts: maxAttempts}, nil
-}
-
-// NewAsyncQueueWithAddr creates a new async queue with Redis address (for backward compatibility)
-func NewAsyncQueueWithAddr(redisAddr, channel string, timeoutSeconds int, handleTimeoutSeconds int, retrySeconds []int, maxAttempts int) (*Queue, error) {
-	client := redis.NewClient(&redis.Options{Addr: redisAddr})
-	return NewAsyncQueue(client, channel, timeoutSeconds, handleTimeoutSeconds, retrySeconds, maxAttempts)
 }
 
 func (q *Queue) Close() error {

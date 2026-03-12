@@ -39,29 +39,29 @@ func LoadConfig(filepath string) (*Config, error) {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 
-	for name, qcfg := range cfg.Queues {
-		if qcfg.TimeoutSeconds <= 0 {
-			qcfg.TimeoutSeconds = 2
+	for name, queueCfg := range cfg.Queues {
+		if queueCfg.TimeoutSeconds <= 0 {
+			queueCfg.TimeoutSeconds = 2
 		}
-		if qcfg.HandleTimeout <= 0 {
-			qcfg.HandleTimeout = 10
+		if queueCfg.HandleTimeout <= 0 {
+			queueCfg.HandleTimeout = 10
 		}
-		if len(qcfg.RetrySeconds) == 0 {
-			qcfg.RetrySeconds = []int{5}
+		if len(queueCfg.RetrySeconds) == 0 {
+			queueCfg.RetrySeconds = []int{5}
 		}
-		if qcfg.MaxAttempts <= 0 {
-			qcfg.MaxAttempts = 3
+		if queueCfg.MaxAttempts <= 0 {
+			queueCfg.MaxAttempts = 3
 		}
-		if qcfg.Processes <= 0 {
-			qcfg.Processes = 1
+		if queueCfg.Processes <= 0 {
+			queueCfg.Processes = 1
 		}
-		if qcfg.Concurrent <= 0 {
-			qcfg.Concurrent = 10
+		if queueCfg.Concurrent <= 0 {
+			queueCfg.Concurrent = 10
 		}
-		if qcfg.ShutdownTimeout <= 0 {
-			qcfg.ShutdownTimeout = 30
+		if queueCfg.ShutdownTimeout <= 0 {
+			queueCfg.ShutdownTimeout = 30
 		}
-		cfg.Queues[name] = qcfg
+		cfg.Queues[name] = queueCfg
 	}
 
 	return &cfg, nil

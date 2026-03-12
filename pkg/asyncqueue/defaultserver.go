@@ -50,6 +50,6 @@ func PushMessage(ctx context.Context, queueName string, msg *Message, delaySecon
 func setDefaultWithWarn(s *Server) {
 	old := defaultServer.Swap(s)
 	if old != nil {
-		log.Println("[asyncqueue] warn: overwriting existing default server")
+		log.Println("warn: overwriting existing default server")
 	}
 }
