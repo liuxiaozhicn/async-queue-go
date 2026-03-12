@@ -3,8 +3,10 @@ package queue
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/liuxiaozhicn/async-queue-go/internal/core"
 )
@@ -97,13 +99,20 @@ func (c *Consumer) Run(ctx context.Context) error {
 		}
 		select {
 		case <-ctx.Done():
+			log.Printf("[Consumer] context cancelled, waiting for in-flight jobs to finish...")
+			start := time.Now()
 			wg.Wait()
+			log.Printf("[Consumer] all in-flight jobs done, waited %v", time.Since(start))
 			return c.runErr()
 		default:
 		}
 
 		data, message, err := c.driver.Pop(ctx)
 		if err != nil {
+			if ctx.Err() != nil {
+				wg.Wait()
+				return c.runErr()
+			}
 			wg.Wait()
 			return err
 		}
@@ -155,7 +164,7 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 
 	defer func() {
 		if r := recover(); r != nil {
-			c.handleError(ctx, data, message)
+			c.handleError(context.Background(), data, message)
 		}
 	}()
 
@@ -164,49 +173,54 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 		return c.handleError(ctx, data, message)
 	}
 
+	// The handler has finished; now we must commit the message disposition
+	// (ack/retry/fail/requeue). This context is detached from cancellation
+	// to guarantee delivery semantics — a completed handler whose result
+	// is not committed leads to duplicate processing.
+	atomicCtx := context.WithoutCancel(ctx)
 	switch result {
 	case core.REQUEUE:
-		if err := c.ackAndHook(ctx, data, message); err != nil {
+		if err := c.ackAndHook(atomicCtx, data, message); err != nil {
 			return err
 		}
-		if err := c.driver.Requeue(ctx, data); err != nil {
+		if err := c.driver.Requeue(atomicCtx, data); err != nil {
 			return err
 		}
 		atomic.AddInt64(&c.requeued, 1)
 		if c.hooks.OnRequeue != nil {
-			c.hooks.OnRequeue(ctx, message)
+			c.hooks.OnRequeue(atomicCtx, message)
 		}
 		return nil
 
 	case core.RETRY:
-		if err := c.ackAndHook(ctx, data, message); err != nil {
+		if err := c.ackAndHook(atomicCtx, data, message); err != nil {
 			return err
 		}
 		if message.AttemptsAllowed() {
-			if err := c.driver.Retry(ctx, message); err != nil {
+			if err := c.driver.Retry(atomicCtx, message); err != nil {
 				return err
 			}
 			atomic.AddInt64(&c.retried, 1)
 			if c.hooks.OnRetry != nil {
-				c.hooks.OnRetry(ctx, message)
+				c.hooks.OnRetry(atomicCtx, message)
 			}
 		}
 		return nil
 
 	case core.DROP:
-		if err := c.ackAndHook(ctx, data, message); err != nil {
+		if err := c.ackAndHook(atomicCtx, data, message); err != nil {
 			return err
 		}
 		atomic.AddInt64(&c.dropped, 1)
 		if c.hooks.OnDrop != nil {
-			c.hooks.OnDrop(ctx, message)
+			c.hooks.OnDrop(atomicCtx, message)
 		}
 		return nil
 
 	case core.ACK:
 		fallthrough
 	default:
-		return c.ackAndHook(ctx, data, message)
+		return c.ackAndHook(atomicCtx, data, message)
 	}
 }
 

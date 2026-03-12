@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -256,7 +257,7 @@ func (m *Manager) closeQueuesLocked() {
 // runWorkerWithAutoRestart runs a worker and automatically restarts it when it exits normally.
 func (m *Manager) runWorkerWithAutoRestart(queueName string, processID int, w *iworker.Worker, q *Queue, handler Handler, cfg QueueConfig) {
 	defer m.wg.Done()
-
+	restartCount := 0
 	for {
 		// Check if manager is still running
 		select {
@@ -269,6 +270,12 @@ func (m *Manager) runWorkerWithAutoRestart(queueName string, processID int, w *i
 		if err := w.Start(m.ctx); err != nil {
 			m.recordError(fmt.Errorf("queue %s process %d start: %w", queueName, processID, err))
 			return
+		}
+
+		if restartCount == 0 {
+			log.Printf("[Manager] queue %s process %d started", queueName, processID)
+		} else {
+			log.Printf("[Manager] queue %s process %d restarted (count=%d)", queueName, processID, restartCount)
 		}
 
 		// Wait for worker to finish
@@ -296,6 +303,10 @@ func (m *Manager) runWorkerWithAutoRestart(queueName string, processID int, w *i
 			return core.Result(res), err
 		}, cfg.Concurrent, cfg.MaxMessages)
 		w = iworker.NewWorker(consumer)
+
+		restartCount++
+		log.Printf("[Manager] queue %s process %d reached max messages (%d), restarting...",
+			queueName, processID, cfg.MaxMessages)
 
 		// Optional: add a small delay before restart to avoid tight loops
 		time.Sleep(100 * time.Millisecond)

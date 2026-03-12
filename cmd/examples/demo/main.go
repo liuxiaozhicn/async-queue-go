@@ -25,7 +25,7 @@ func (j *OrderJob) GetType() string { return "order" }
 
 func (j *OrderJob) Handle(ctx context.Context) (asyncqueue.Result, error) {
 	log.Printf("[OrderJob] processing order #%d for user %d, total: %.2f", j.OrderID, j.UserID, j.TotalAmount)
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(10 * time.Second)
 	log.Printf("[OrderJob] order #%d handled successfully", j.OrderID)
 	return asyncqueue.ACK, nil
 }
@@ -95,7 +95,7 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		ticker := time.NewTicker(10 * time.Second)
+		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 
 		orderID := 2000
@@ -116,9 +116,9 @@ func main() {
 					TotalAmount: float64(orderID%500 + 50),
 				}
 				if err := queue.PushJob(ctx, job, 0); err != nil {
-					log.Printf("[Push] failed to push periodic job: %v", err)
+					log.Printf("[Push] push order  job error: %v", err)
 				} else {
-					log.Printf("[Push] periodic order #%d pushed", orderID)
+					log.Printf("[Push] order job  #%d pushed", orderID)
 				}
 			}
 		}

@@ -58,10 +58,13 @@ func (w *Worker) Wait() error {
 	<-done
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return w.err
+	err := w.err
+	w.resetLocked()
+	return err
 }
 
 func (w *Worker) Stop(graceTimeout time.Duration) error {
+	fmt.Printf("stop 执行")
 	w.mu.Lock()
 	done := w.done
 	cancel := w.cancel
@@ -77,7 +80,9 @@ func (w *Worker) Stop(graceTimeout time.Duration) error {
 		<-done
 		w.mu.Lock()
 		defer w.mu.Unlock()
-		return w.err
+		err := w.err
+		w.resetLocked()
+		return err
 	}
 
 	timer := time.NewTimer(graceTimeout)
@@ -86,15 +91,19 @@ func (w *Worker) Stop(graceTimeout time.Duration) error {
 	case <-done:
 		w.mu.Lock()
 		defer w.mu.Unlock()
-		return w.err
+		err := w.err
+		w.resetLocked()
+		return err
 	case <-timer.C:
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		w.resetLocked()
 		return fmt.Errorf("worker shutdown timeout exceeded")
 	}
 }
 
-func (w *Worker) reset() {
-	w.mu.Lock()
-	defer w.mu.Unlock()
+// resetLocked clears state so the Worker can be re-started. Caller must hold mu.
+func (w *Worker) resetLocked() {
 	w.started = false
 	w.ctx = nil
 	w.cancel = nil
