@@ -12,8 +12,6 @@ type Consumer interface {
 	Run(context.Context) error
 }
 
-type SignalContextProvider func() (context.Context, context.CancelFunc)
-
 type Worker struct {
 	consumer Consumer
 
@@ -21,7 +19,8 @@ type Worker struct {
 	started bool
 	ctx     context.Context
 	cancel  context.CancelFunc
-	done    chan error
+	done    chan struct{} // closed when consumer exits; all waiters unblock
+	err     error         // consumer result, guarded by mu
 }
 
 func NewWorker(consumer Consumer) *Worker {
@@ -35,10 +34,15 @@ func (w *Worker) Start(ctx context.Context) error {
 		return errors.New("worker already started")
 	}
 	w.ctx, w.cancel = context.WithCancel(ctx)
-	w.done = make(chan error, 1)
+	w.done = make(chan struct{})
+	w.err = nil
 	w.started = true
 	go func() {
-		w.done <- w.consumer.Run(w.ctx)
+		err := w.consumer.Run(w.ctx)
+		w.mu.Lock()
+		w.err = err
+		w.mu.Unlock()
+		close(w.done)
 	}()
 	return nil
 }
@@ -51,7 +55,10 @@ func (w *Worker) Wait() error {
 	if !started || done == nil {
 		return errors.New("worker not started")
 	}
-	return <-done
+	<-done
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.err
 }
 
 func (w *Worker) Stop(graceTimeout time.Duration) error {
@@ -67,19 +74,20 @@ func (w *Worker) Stop(graceTimeout time.Duration) error {
 	cancel()
 
 	if graceTimeout <= 0 {
-		err := <-done
-		w.reset()
-		return err
+		<-done
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		return w.err
 	}
 
 	timer := time.NewTimer(graceTimeout)
 	defer timer.Stop()
 	select {
-	case err := <-done:
-		w.reset()
-		return err
+	case <-done:
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		return w.err
 	case <-timer.C:
-		w.reset()
 		return fmt.Errorf("worker shutdown timeout exceeded")
 	}
 }
@@ -91,4 +99,5 @@ func (w *Worker) reset() {
 	w.ctx = nil
 	w.cancel = nil
 	w.done = nil
+	w.err = nil
 }
