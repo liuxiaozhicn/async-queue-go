@@ -19,7 +19,7 @@ func (f *fakeConsumer) Run(ctx context.Context) error {
 }
 
 func TestWorkerStartAndWait(t *testing.T) {
-	w := NewWorker(&fakeConsumer{}, nil)
+	w := NewWorker(&fakeConsumer{})
 	if err := w.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestWorkerStartAndWait(t *testing.T) {
 }
 
 func TestWorkerStopWithTimeout(t *testing.T) {
-	w := NewWorker(&fakeConsumer{run: func(context.Context) error { select {} }}, nil)
+	w := NewWorker(&fakeConsumer{run: func(context.Context) error { select {} }})
 	if err := w.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestWorkerStopReturnsRunError(t *testing.T) {
 	w := NewWorker(&fakeConsumer{run: func(ctx context.Context) error {
 		<-ctx.Done()
 		return errors.New("boom")
-	}}, nil)
+	}})
 	if err := w.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -53,17 +53,13 @@ func TestWorkerStopReturnsRunError(t *testing.T) {
 }
 
 func TestWorkerRunWithSignals(t *testing.T) {
-	signalCtx, signalCancel := context.WithCancel(context.Background())
 	w := NewWorker(&fakeConsumer{run: func(ctx context.Context) error {
 		<-ctx.Done()
 		return nil
-	}}, func() (context.Context, context.CancelFunc) {
-		return signalCtx, signalCancel
-	})
+	}})
 
 	go func() {
 		time.Sleep(10 * time.Millisecond)
-		signalCancel()
 	}()
 
 	if err := w.RunWithSignals(context.Background(), time.Second); err != nil {

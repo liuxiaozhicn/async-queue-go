@@ -2,155 +2,130 @@ package main
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
-
-	"github.com/liuxiaozhicn/async-queue-go/internal/core"
-	"github.com/liuxiaozhicn/async-queue-go/internal/queue"
 )
 
-type fakeWorkerDriver struct{}
-
-func (f *fakeWorkerDriver) Push(context.Context, *core.Message, int) error { return nil }
-func (f *fakeWorkerDriver) Delete(context.Context, *core.Message) error    { return nil }
-func (f *fakeWorkerDriver) Pop(context.Context) (string, *core.Message, error) {
-	return "", nil, nil
-}
-func (f *fakeWorkerDriver) Ack(context.Context, string) error           { return nil }
-func (f *fakeWorkerDriver) Fail(context.Context, string) error          { return nil }
-func (f *fakeWorkerDriver) Requeue(context.Context, string) error       { return nil }
-func (f *fakeWorkerDriver) Retry(context.Context, *core.Message) error  { return nil }
-func (f *fakeWorkerDriver) Reload(context.Context, string) (int, error) { return 0, nil }
-func (f *fakeWorkerDriver) Flush(context.Context, string) error         { return nil }
-func (f *fakeWorkerDriver) Info(context.Context) (queue.Info, error)    { return queue.Info{}, nil }
-
-type fakeRuntime struct {
-	startCalled         bool
-	waitCalled          bool
-	runWithSignalCalled bool
-	waitErr             error
-	runWithSignalErr    error
-	lastTimeout         time.Duration
-}
-
-func (f *fakeRuntime) Start(context.Context) error {
-	f.startCalled = true
-	return nil
-}
-
-func (f *fakeRuntime) Wait() error {
-	f.waitCalled = true
-	return f.waitErr
-}
-
-func (f *fakeRuntime) RunWithSignals(_ context.Context, timeout time.Duration) error {
-	f.runWithSignalCalled = true
-	f.lastTimeout = timeout
-	return f.runWithSignalErr
-}
-
-func TestParseWorkerArgs(t *testing.T) {
-	opts, err := parseWorkerArgs([]string{"-redis-addr", "1.2.3.4:6379", "-channel", "c1", "-retry-seconds", "1,2,3", "-max-messages", "9", "-shutdown-timeout", "12"})
+func TestParseArgs(t *testing.T) {
+	opts, err := parseArgs([]string{
+		"-redis-addr", "1.2.3.4:6379",
+		"-channel", "c1",
+		"-retry-seconds", "1,2,3",
+		"-max-messages", "9",
+		"-shutdown-timeout", "12",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if opts.redisAddr != "1.2.3.4:6379" || opts.channel != "c1" || opts.maxMessages != 9 || opts.shutdownTimeout != 12 {
-		t.Fatalf("unexpected opts: %+v", opts)
+	if opts.redisAddr != "1.2.3.4:6379" {
+		t.Fatalf("expected redis-addr=1.2.3.4:6379, got %s", opts.redisAddr)
 	}
-	if len(opts.retrySeconds) != 3 || opts.retrySeconds[2] != 3 {
-		t.Fatalf("unexpected retry seconds: %#v", opts.retrySeconds)
+	if opts.channel != "c1" {
+		t.Fatalf("expected channel=c1, got %s", opts.channel)
+	}
+	if opts.maxMessages != 9 {
+		t.Fatalf("expected max-messages=9, got %d", opts.maxMessages)
+	}
+	if opts.shutdownTimeout != 12 {
+		t.Fatalf("expected shutdown-timeout=12, got %d", opts.shutdownTimeout)
+	}
+	if len(opts.retrySeconds) != 3 || opts.retrySeconds[0] != 1 || opts.retrySeconds[1] != 2 || opts.retrySeconds[2] != 3 {
+		t.Fatalf("expected retry-seconds=[1,2,3], got %v", opts.retrySeconds)
 	}
 }
 
-func TestRunWorkerCallsRuntime(t *testing.T) {
-	origDriver := newWorkerDriver
-	origRuntime := newWorkerRuntime
-	defer func() {
-		newWorkerDriver = origDriver
-		newWorkerRuntime = origRuntime
-	}()
-
-	newWorkerDriver = func(workerOptions) (queue.Driver, error) {
-		return &fakeWorkerDriver{}, nil
-	}
-	fr := &fakeRuntime{}
-	newWorkerRuntime = func(queue.Driver, int, int) workerRuntime { return fr }
-
-	if err := runWorker(context.Background(), []string{"-max-messages", "1"}); err != nil {
+func TestParseArgsDefaults(t *testing.T) {
+	opts, err := parseArgs(nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if !fr.startCalled || !fr.waitCalled {
-		t.Fatal("expected runtime start and wait to be called")
+	if opts.redisAddr != "127.0.0.1:6379" {
+		t.Fatalf("expected default redis-addr, got %s", opts.redisAddr)
+	}
+	if opts.concurrent != 10 {
+		t.Fatalf("expected default concurrent=10, got %d", opts.concurrent)
+	}
+	if opts.shutdownTimeout != 30 {
+		t.Fatalf("expected default shutdown-timeout=30, got %d", opts.shutdownTimeout)
+	}
+	if len(opts.retrySeconds) != 1 || opts.retrySeconds[0] != 5 {
+		t.Fatalf("expected default retry-seconds=[5], got %v", opts.retrySeconds)
 	}
 }
 
-func TestParseWorkerArgsInvalidRetry(t *testing.T) {
-	_, err := parseWorkerArgs([]string{"-retry-seconds", "x"})
+func TestParseArgsInvalidRetry(t *testing.T) {
+	_, err := parseArgs([]string{"-retry-seconds", "x"})
 	if err == nil {
-		t.Fatal("expected error")
+		t.Fatal("expected error for invalid retry-seconds")
 	}
 }
 
-func TestParseWorkerArgsInvalidShutdownTimeout(t *testing.T) {
-	_, err := parseWorkerArgs([]string{"-shutdown-timeout", "0"})
+func TestParseArgsInvalidShutdownTimeout(t *testing.T) {
+	_, err := parseArgs([]string{"-shutdown-timeout", "0"})
 	if err == nil {
-		t.Fatal("expected error")
+		t.Fatal("expected error for zero shutdown-timeout")
 	}
 }
 
-func TestRunWorkerDriverError(t *testing.T) {
-	origDriver := newWorkerDriver
-	defer func() { newWorkerDriver = origDriver }()
-	newWorkerDriver = func(workerOptions) (queue.Driver, error) {
-		return nil, errors.New("dial error")
-	}
-	if err := runWorker(context.Background(), nil); err == nil {
-		t.Fatal("expected error")
+func TestRunRedisConnectError(t *testing.T) {
+	// Use an unreachable address to trigger connection error
+	err := run(context.Background(), []string{"-redis-addr", "127.0.0.1:1"})
+	if err == nil {
+		t.Fatal("expected redis connect error")
 	}
 }
 
-func TestRunWorkerWithSignals(t *testing.T) {
-	origDriver := newWorkerDriver
-	origRuntime := newWorkerRuntime
-	defer func() {
-		newWorkerDriver = origDriver
-		newWorkerRuntime = origRuntime
-	}()
+func TestRunContextCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
 
-	newWorkerDriver = func(workerOptions) (queue.Driver, error) {
-		return &fakeWorkerDriver{}, nil
+	err := run(ctx, []string{"-redis-addr", "127.0.0.1:1"})
+	if err == nil {
+		t.Fatal("expected error on cancelled context")
 	}
-	fr := &fakeRuntime{}
-	newWorkerRuntime = func(queue.Driver, int, int) workerRuntime { return fr }
+}
 
-	if err := runWorkerWithSignals([]string{"-max-messages", "1"}); err != nil {
+func TestRunParseError(t *testing.T) {
+	err := run(context.Background(), []string{"-shutdown-timeout", "0"})
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+}
+
+func TestParseArgsEmptyRetryFallsBack(t *testing.T) {
+	opts, err := parseArgs([]string{"-retry-seconds", ""})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if !fr.runWithSignalCalled {
-		t.Fatal("expected runtime RunWithSignals to be called")
-	}
-	if fr.lastTimeout != 30*time.Second {
-		t.Fatalf("expected timeout=30s, got %v", fr.lastTimeout)
+	if len(opts.retrySeconds) != 1 || opts.retrySeconds[0] != 5 {
+		t.Fatalf("expected fallback retry-seconds=[5], got %v", opts.retrySeconds)
 	}
 }
 
-func TestRunWorkerWithSignalsShutdownTimeout(t *testing.T) {
-	origDriver := newWorkerDriver
-	origRuntime := newWorkerRuntime
-	defer func() {
-		newWorkerDriver = origDriver
-		newWorkerRuntime = origRuntime
-	}()
-
-	newWorkerDriver = func(workerOptions) (queue.Driver, error) {
-		return &fakeWorkerDriver{}, nil
+func TestParseArgsRetryWithSpaces(t *testing.T) {
+	opts, err := parseArgs([]string{"-retry-seconds", " 10 , 20 , 30 "})
+	if err != nil {
+		t.Fatal(err)
 	}
-	fr := &fakeRuntime{runWithSignalErr: errors.New("worker shutdown timeout exceeded")}
-	newWorkerRuntime = func(queue.Driver, int, int) workerRuntime { return fr }
+	if len(opts.retrySeconds) != 3 || opts.retrySeconds[0] != 10 || opts.retrySeconds[2] != 30 {
+		t.Fatalf("expected [10,20,30], got %v", opts.retrySeconds)
+	}
+}
 
-	err := runWorkerWithSignals([]string{"-shutdown-timeout", "1"})
-	if err == nil || err.Error() != "worker shutdown timeout exceeded" {
-		t.Fatalf("expected shutdown timeout error, got %v", err)
+func TestParseArgsNegativeShutdownTimeout(t *testing.T) {
+	_, err := parseArgs([]string{"-shutdown-timeout", "-5"})
+	if err == nil {
+		t.Fatal("expected error for negative shutdown-timeout")
+	}
+}
+
+func TestRunRedisConnectTimeout(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	// Non-routable address to force timeout
+	err := run(ctx, []string{"-redis-addr", "10.255.255.1:6379"})
+	if err == nil {
+		t.Fatal("expected timeout error")
 	}
 }

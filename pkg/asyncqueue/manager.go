@@ -118,7 +118,7 @@ func (m *Manager) StartWorker() error {
 				res, err := handler(ctx, &Message{Payload: m.Payload, Attempts: m.Attempts, MaxAttempts: m.MaxAttempts})
 				return core.Result(res), err
 			}, queueCfg.Concurrent, queueCfg.MaxMessages)
-			w := iworker.NewWorker(consumer, nil)
+			w := iworker.NewWorker(consumer)
 
 			workers = append(workers, w)
 			m.wg.Add(1)
@@ -295,7 +295,7 @@ func (m *Manager) runWorkerWithAutoRestart(queueName string, processID int, w *i
 			res, err := handler(ctx, &Message{Payload: m.Payload, Attempts: m.Attempts, MaxAttempts: m.MaxAttempts})
 			return core.Result(res), err
 		}, cfg.Concurrent, cfg.MaxMessages)
-		w = iworker.NewWorker(consumer, nil)
+		w = iworker.NewWorker(consumer)
 
 		// Optional: add a small delay before restart to avoid tight loops
 		time.Sleep(100 * time.Millisecond)

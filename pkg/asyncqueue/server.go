@@ -3,9 +3,6 @@ package asyncqueue
 import (
 	"context"
 	"errors"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -105,7 +102,7 @@ func (s *Server) Bind(jobs ...Job) {
 // processing, handles OS signals, and blocks until exit.
 //
 // Build the registry with NewHandlerRegistry + WrapJob, or via queueHandle:
-func (s *Server) Run(serveMux *ServeMux) error {
+func (s *Server) Run(ctx context.Context, serveMux *ServeMux) error {
 	if s == nil || s.manager == nil {
 		return errors.New("server is nil")
 	}
@@ -116,8 +113,6 @@ func (s *Server) Run(serveMux *ServeMux) error {
 		}
 		serveMux.mu.RUnlock()
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	return s.manager.Run(ctx, s.shutdownTimeout())
 }
 

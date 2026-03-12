@@ -29,38 +29,7 @@ type workerOptions struct {
 	shutdownTimeout int
 }
 
-type workerRuntime interface {
-	Start(context.Context) error
-	Wait() error
-	RunWithSignals(context.Context, time.Duration) error
-}
-
-var newWorkerDriver = func(opts workerOptions) (queue.Driver, error) {
-	client := redis.NewClient(&redis.Options{Addr: opts.redisAddr})
-	if err := client.Ping(context.Background()).Err(); err != nil {
-		_ = client.Close()
-		return nil, err
-	}
-	return queue.NewRedisDriver(client, opts.channel, opts.timeout, opts.handleTimeout, opts.retrySeconds), nil
-}
-
-var newWorkerConsumer = func(d queue.Driver, concurrent int, maxMessages int) worker.Consumer {
-	handler := func(context.Context, *core.Message) (core.Result, error) {
-		return core.ACK, nil
-	}
-	return queue.NewConsumer(d, handler, concurrent, maxMessages)
-}
-
-var newSignalContext = func() (context.Context, context.CancelFunc) {
-	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-}
-
-var newWorkerRuntime = func(d queue.Driver, concurrent int, maxMessages int) workerRuntime {
-	consumer := newWorkerConsumer(d, concurrent, maxMessages)
-	return worker.NewWorker(consumer, newSignalContext)
-}
-
-func parseWorkerArgs(args []string) (workerOptions, error) {
+func parseArgs(args []string) (workerOptions, error) {
 	fs := flag.NewFlagSet("aq-worker", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 
@@ -80,13 +49,13 @@ func parseWorkerArgs(args []string) (workerOptions, error) {
 	}
 
 	parts := strings.Split(strings.TrimSpace(retry), ",")
-	opts.retrySeconds = make([]int, 0, len(parts))
 	for _, p := range parts {
+		p = strings.TrimSpace(p)
 		if p == "" {
 			continue
 		}
 		var v int
-		if _, err := fmt.Sscanf(strings.TrimSpace(p), "%d", &v); err != nil {
+		if _, err := fmt.Sscanf(p, "%d", &v); err != nil {
 			return workerOptions{}, errors.New("invalid retry-seconds")
 		}
 		opts.retrySeconds = append(opts.retrySeconds, v)
@@ -100,39 +69,50 @@ func parseWorkerArgs(args []string) (workerOptions, error) {
 	return opts, nil
 }
 
-func buildWorkerRuntime(args []string) (workerRuntime, workerOptions, error) {
-	opts, err := parseWorkerArgs(args)
+func run(ctx context.Context, args []string) error {
+	opts, err := parseArgs(args)
 	if err != nil {
-		return nil, workerOptions{}, err
+		return err
 	}
-	driver, err := newWorkerDriver(opts)
-	if err != nil {
-		return nil, workerOptions{}, err
-	}
-	return newWorkerRuntime(driver, opts.concurrent, opts.maxMessages), opts, nil
-}
 
-func runWorker(ctx context.Context, args []string) error {
-	runtime, _, err := buildWorkerRuntime(args)
-	if err != nil {
-		return err
+	// Connect to Redis
+	client := redis.NewClient(&redis.Options{Addr: opts.redisAddr})
+	if err := client.Ping(ctx).Err(); err != nil {
+		_ = client.Close()
+		return fmt.Errorf("redis connect: %w", err)
 	}
-	if err := runtime.Start(ctx); err != nil {
-		return err
-	}
-	return runtime.Wait()
-}
+	defer client.Close()
 
-func runWorkerWithSignals(args []string) error {
-	runtime, opts, err := buildWorkerRuntime(args)
-	if err != nil {
+	// Build driver → consumer → worker
+	driver := queue.NewRedisDriver(client, opts.channel, opts.timeout, opts.handleTimeout, opts.retrySeconds)
+	handler := func(ctx context.Context, m *core.Message) (core.Result, error) {
+		return core.ACK, nil
+	}
+	consumer := queue.NewConsumer(driver, handler, opts.concurrent, opts.maxMessages)
+	w := worker.NewWorker(consumer)
+
+	// Start worker
+	if err := w.Start(ctx); err != nil {
 		return err
 	}
-	return runtime.RunWithSignals(context.Background(), time.Duration(opts.shutdownTimeout)*time.Second)
+
+	// Wait for finish; on signal ctx cancels, then enforce shutdown timeout
+	done := make(chan error, 1)
+	go func() { done <- w.Wait() }()
+
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return w.Stop(time.Duration(opts.shutdownTimeout) * time.Second)
+	}
 }
 
 func main() {
-	if err := runWorkerWithSignals(os.Args[1:]); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := run(ctx, os.Args[1:]); err != nil {
 		b, _ := json.Marshal(map[string]string{"error": err.Error()})
 		_, _ = os.Stderr.Write(append(b, '\n'))
 		os.Exit(1)

@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"github.com/redis/go-redis/v9"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -176,7 +178,9 @@ func TestServerRun(t *testing.T) {
 		reg.Register("bindTestJob2", WrapJob(&bindTestJob2{}))
 
 		done := make(chan error, 1)
-		go func() { done <- s.Run(reg) }()
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		go func() { done <- s.Run(ctx, reg) }()
 		time.Sleep(10 * time.Millisecond)
 
 		if _, ok := s.serveMux.Get("bindTestJob"); !ok {
@@ -200,7 +204,7 @@ func TestServerRun(t *testing.T) {
 		s.Handle("default", func(context.Context, *Message) (Result, error) { return ACK, nil })
 
 		done := make(chan error, 1)
-		go func() { done <- s.Run(nil) }()
+		go func() { done <- s.Run(nil, nil) }()
 		time.Sleep(10 * time.Millisecond)
 
 		if err := s.Stop(time.Second); err != nil {

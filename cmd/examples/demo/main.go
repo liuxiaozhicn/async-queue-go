@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -25,17 +24,16 @@ type OrderJob struct {
 func (j *OrderJob) GetType() string { return "order" }
 
 func (j *OrderJob) Handle(ctx context.Context) (asyncqueue.Result, error) {
-	fmt.Printf("[OrderJob] Processing order #%d for user %d, total: %.2f\n",
-		j.OrderID, j.UserID, j.TotalAmount)
+	log.Printf("[OrderJob] processing order #%d for user %d, total: %.2f", j.OrderID, j.UserID, j.TotalAmount)
 	time.Sleep(200 * time.Millisecond)
-	fmt.Printf("[OrderJob] Order #%d Handle successfully\n", j.OrderID)
+	log.Printf("[OrderJob] order #%d handled successfully", j.OrderID)
 	return asyncqueue.ACK, nil
 }
 
 func pushSampleJobs(ctx context.Context, s *asyncqueue.Server) {
 	queue, err := s.Queue("order")
 	if err != nil {
-		log.Printf("Failed to get queue: %v", err)
+		log.Printf("[Push] failed to get queue: %v", err)
 		return
 	}
 
@@ -48,15 +46,15 @@ func pushSampleJobs(ctx context.Context, s *asyncqueue.Server) {
 		{&OrderJob{OrderID: 1003, UserID: 123, TotalAmount: 149.50}, 0},
 	}
 
-	fmt.Println("\n=== Pushing sample jobs ===")
+	log.Println("[Push] pushing sample jobs")
 	for _, s := range samples {
 		if err := queue.PushJob(ctx, s.job, s.delay); err != nil {
-			log.Printf("Failed to push order #%d: %v", s.job.OrderID, err)
+			log.Printf("[Push] failed to push order #%d: %v", s.job.OrderID, err)
 		} else {
-			fmt.Printf("✓ Pushed OrderJob #%d (delay=%ds)\n", s.job.OrderID, s.delay)
+			log.Printf("[Push] order #%d pushed (delay=%ds)", s.job.OrderID, s.delay)
 		}
 	}
-	fmt.Println("=== All sample jobs pushed ===\n")
+	log.Println("[Push] all sample jobs pushed")
 }
 
 func main() {
@@ -68,11 +66,14 @@ func main() {
 
 	s, err := asyncqueue.LoadServer(*configFile, client)
 	if err != nil {
-		log.Fatalf("Failed to load server: %v", err)
+		log.Fatalf("[Main] failed to load server: %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	var wg sync.WaitGroup
 
@@ -80,9 +81,9 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		fmt.Println("🚀 Worker started, listening on order queue...")
-		if err := s.Run(asyncqueue.NewServeMux(&OrderJob{})); err != nil {
-			log.Printf("Worker error: %v", err)
+		log.Println("[Worker] started, listening on order queue")
+		if err := s.Run(ctx, asyncqueue.NewServeMux(&OrderJob{})); err != nil {
+			log.Printf("[Worker] error: %v", err)
 		}
 	}()
 
@@ -106,7 +107,7 @@ func main() {
 				orderID++
 				queue, err := s.Queue("order")
 				if err != nil {
-					log.Printf("Failed to get queue: %v", err)
+					log.Printf("[Push] failed to get queue: %v", err)
 					continue
 				}
 				job := &OrderJob{
@@ -115,22 +116,22 @@ func main() {
 					TotalAmount: float64(orderID%500 + 50),
 				}
 				if err := queue.PushJob(ctx, job, 0); err != nil {
-					log.Printf("Failed to push periodic job: %v", err)
+					log.Printf("[Push] failed to push periodic job: %v", err)
 				} else {
-					fmt.Printf("⏰ Pushed periodic OrderJob #%d\n", orderID)
+					log.Printf("[Push] periodic order #%d pushed", orderID)
 				}
 			}
 		}
 	}()
 
-	fmt.Println("\n🎯 Running! Press Ctrl+C to stop.")
+	log.Println("[Main] running, press Ctrl+C to stop")
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChan
 
-	fmt.Println("\n🛑 Shutting down...")
+	log.Println("[Main] shutting down...")
 	cancel()
 	wg.Wait()
-	fmt.Println("✅ Stopped.")
+	log.Println("[Main] stopped")
 }

@@ -4,10 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"os/signal"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -19,7 +16,6 @@ type SignalContextProvider func() (context.Context, context.CancelFunc)
 
 type Worker struct {
 	consumer Consumer
-	signal   SignalContextProvider
 
 	mu      sync.Mutex
 	started bool
@@ -28,13 +24,8 @@ type Worker struct {
 	done    chan error
 }
 
-func NewWorker(consumer Consumer, signalProvider SignalContextProvider) *Worker {
-	if signalProvider == nil {
-		signalProvider = func() (context.Context, context.CancelFunc) {
-			return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		}
-	}
-	return &Worker{consumer: consumer, signal: signalProvider}
+func NewWorker(consumer Consumer) *Worker {
+	return &Worker{consumer: consumer}
 }
 
 func (w *Worker) Start(ctx context.Context) error {
@@ -74,43 +65,30 @@ func (w *Worker) Stop(graceTimeout time.Duration) error {
 	}
 
 	cancel()
+
 	if graceTimeout <= 0 {
-		return <-done
+		err := <-done
+		w.reset()
+		return err
 	}
 
 	timer := time.NewTimer(graceTimeout)
 	defer timer.Stop()
 	select {
 	case err := <-done:
+		w.reset()
 		return err
 	case <-timer.C:
+		w.reset()
 		return fmt.Errorf("worker shutdown timeout exceeded")
 	}
 }
 
-func (w *Worker) RunWithSignals(ctx context.Context, shutdownTimeout time.Duration) error {
-	sigCtx, stop := w.signal()
-	defer stop()
-
-	baseCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	go func() {
-		select {
-		case <-sigCtx.Done():
-			cancel()
-		case <-baseCtx.Done():
-		}
-	}()
-
-	if err := w.Start(baseCtx); err != nil {
-		return err
-	}
-
-	select {
-	case err := <-w.done:
-		return err
-	case <-sigCtx.Done():
-		return w.Stop(shutdownTimeout)
-	}
+func (w *Worker) reset() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.started = false
+	w.ctx = nil
+	w.cancel = nil
+	w.done = nil
 }

@@ -21,10 +21,6 @@ func TestOrderJob_Handle(t *testing.T) {
 		OrderID:     1001,
 		UserID:      42,
 		TotalAmount: 299.99,
-		Items: []OrderItem{
-			{ProductID: 1, Name: "Widget A", Quantity: 2, Price: 99.99},
-			{ProductID: 2, Name: "Widget B", Quantity: 1, Price: 100.01},
-		},
 	}
 
 	ctx := context.Background()
@@ -43,9 +39,6 @@ func TestOrderJob_HandleWithTimeout(t *testing.T) {
 		OrderID:     1002,
 		UserID:      99,
 		TotalAmount: 59.90,
-		Items: []OrderItem{
-			{ProductID: 3, Name: "Gadget", Quantity: 1, Price: 59.90},
-		},
 	}
 
 	// Test with a context that has a timeout longer than the job processing time
@@ -62,36 +55,11 @@ func TestOrderJob_HandleWithTimeout(t *testing.T) {
 	}
 }
 
-func TestOrderItem_Structure(t *testing.T) {
-	item := OrderItem{
-		ProductID: 123,
-		Name:      "Test Product",
-		Quantity:  5,
-		Price:     99.99,
-	}
-
-	if item.ProductID != 123 {
-		t.Errorf("ProductID = %v, want 123", item.ProductID)
-	}
-	if item.Name != "Test Product" {
-		t.Errorf("Name = %v, want 'Test Product'", item.Name)
-	}
-	if item.Quantity != 5 {
-		t.Errorf("Quantity = %v, want 5", item.Quantity)
-	}
-	if item.Price != 99.99 {
-		t.Errorf("Price = %v, want 99.99", item.Price)
-	}
-}
-
 func TestOrderJob_Structure(t *testing.T) {
 	job := OrderJob{
 		OrderID:     1001,
 		UserID:      42,
 		TotalAmount: 299.99,
-		Items: []OrderItem{
-			{ProductID: 1, Name: "Widget A", Quantity: 2, Price: 99.99},
-		},
 	}
 
 	if job.OrderID != 1001 {
@@ -103,11 +71,6 @@ func TestOrderJob_Structure(t *testing.T) {
 	if job.TotalAmount != 299.99 {
 		t.Errorf("TotalAmount = %v, want 299.99", job.TotalAmount)
 	}
-	if len(job.Items) != 1 {
-		t.Errorf("Items length = %v, want 1", len(job.Items))
-	}
-	// Note: BaseJob.MaxAttempts is not used in runtime (config takes precedence)
-	// but we can still test the structure
 }
 
 // Benchmark tests
@@ -116,9 +79,6 @@ func BenchmarkOrderJob_Handle(b *testing.B) {
 		OrderID:     1001,
 		UserID:      42,
 		TotalAmount: 299.99,
-		Items: []OrderItem{
-			{ProductID: 1, Name: "Widget A", Quantity: 2, Price: 99.99},
-		},
 	}
 	ctx := context.Background()
 
