@@ -28,10 +28,10 @@ type Server struct {
 // Use opts to provide optional configuration (logger, tracer, etc.).
 func NewServer(cfg *Config, redisClient redis.UniversalClient, opts ...Option) (*Server, error) {
 	if cfg == nil {
-		return nil, errors.New("asyncqueue: cfg is required")
+		return nil, errors.New("config is required")
 	}
 	if redisClient == nil {
-		return nil, errors.New("asyncqueue: redisClient is required — create a *redis.Client or *redis.ClusterClient and pass it in")
+		return nil, errors.New("redisClient is required — create a *redis.Client or *redis.ClusterClient and pass it in")
 	}
 
 	serveMux := NewServeMux()
@@ -105,16 +105,6 @@ func (s *Server) Bind(jobs ...Job) {
 // processing, handles OS signals, and blocks until exit.
 //
 // Build the registry with NewHandlerRegistry + WrapJob, or via queueHandle:
-//
-//	func queueHandle(q *InitQueue) *asyncqueue.HandlerRegistry {
-//	    reg := asyncqueue.NewHandlerRegistry()
-//	    reg.Register(q.CreateOrderJob.GetType(), asyncqueue.WrapJob(q.CreateOrderJob))
-//	    // add new job here only — Run never changes
-//	    return reg
-//	}
-//	s.Run(queueHandle(initQueue))
-//
-// Pass nil when Bind/Handle have already been called directly.
 func (s *Server) Run(serveMux *ServeMux) error {
 	if s == nil || s.manager == nil {
 		return errors.New("server is nil")
