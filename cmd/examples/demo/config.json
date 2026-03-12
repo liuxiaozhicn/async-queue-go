@@ -1,0 +1,17 @@
+{
+  "queues": {
+    "order": {
+      "channel": "queue:order",
+      "timeout_seconds": 2,
+      "handle_timeout": 30,
+      "retry_seconds": [5, 10, 30],
+      "max_attempts": 3,
+      "processes": 2,
+      "concurrent": 10,
+      "max_messages": 0,
+      "shutdown_timeout": 30,
+      "enabled": true,
+      "auto_restart": false
+    }
+  }
+}

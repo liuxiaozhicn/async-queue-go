@@ -1,0 +1,249 @@
+package queue
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"sync/atomic"
+
+	"github.com/liuxiaozhicn/async-queue-go/internal/core"
+)
+
+type Handler func(context.Context, *core.Message) (core.Result, error)
+
+type ConsumerHooks struct {
+	OnAck     func(context.Context, *core.Message)
+	OnRetry   func(context.Context, *core.Message)
+	OnRequeue func(context.Context, *core.Message)
+	OnFail    func(context.Context, *core.Message)
+	OnDrop    func(context.Context, *core.Message)
+}
+
+type ConsumerStats struct {
+	Processed int64
+	Acked     int64
+	Retried   int64
+	Requeued  int64
+	Failed    int64
+	Dropped   int64
+	Errors    int64
+}
+
+type ConsumerRunError struct {
+	First error
+	Count int64
+}
+
+func (e *ConsumerRunError) Error() string {
+	if e == nil || e.First == nil {
+		return ""
+	}
+	if e.Count <= 1 {
+		return e.First.Error()
+	}
+	return fmt.Sprintf("%s (and %d more errors)", e.First.Error(), e.Count-1)
+}
+
+type Consumer struct {
+	driver          Driver
+	handler         Handler
+	concurrentLimit int
+	maxMessages     int
+	hooks           ConsumerHooks
+
+	processed int64
+	acked     int64
+	retried   int64
+	requeued  int64
+	failed    int64
+	dropped   int64
+	errors    int64
+
+	errMu    sync.Mutex
+	firstErr error
+}
+
+func NewConsumer(driver Driver, handler Handler, concurrentLimit int, maxMessages int) *Consumer {
+	return NewConsumerWithHooks(driver, handler, concurrentLimit, maxMessages, ConsumerHooks{})
+}
+
+func NewConsumerWithHooks(driver Driver, handler Handler, concurrentLimit int, maxMessages int, hooks ConsumerHooks) *Consumer {
+	if concurrentLimit <= 0 {
+		concurrentLimit = 1
+	}
+	return &Consumer{driver: driver, handler: handler, concurrentLimit: concurrentLimit, maxMessages: maxMessages, hooks: hooks}
+}
+
+func (c *Consumer) Stats() ConsumerStats {
+	return ConsumerStats{
+		Processed: atomic.LoadInt64(&c.processed),
+		Acked:     atomic.LoadInt64(&c.acked),
+		Retried:   atomic.LoadInt64(&c.retried),
+		Requeued:  atomic.LoadInt64(&c.requeued),
+		Failed:    atomic.LoadInt64(&c.failed),
+		Dropped:   atomic.LoadInt64(&c.dropped),
+		Errors:    atomic.LoadInt64(&c.errors),
+	}
+}
+
+func (c *Consumer) Run(ctx context.Context) error {
+	sem := make(chan struct{}, c.concurrentLimit)
+	var wg sync.WaitGroup
+
+	count := 0
+	for {
+		if c.maxMessages > 0 && count >= c.maxMessages {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			wg.Wait()
+			return c.runErr()
+		default:
+		}
+
+		data, message, err := c.driver.Pop(ctx)
+		if err != nil {
+			wg.Wait()
+			return err
+		}
+		if data == "" || message == nil {
+			continue
+		}
+		count++
+		atomic.AddInt64(&c.processed, 1)
+
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(data string, msg *core.Message) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if err := c.handleOne(ctx, data, msg); err != nil {
+				c.recordErr(err)
+			}
+		}(data, message)
+	}
+
+	wg.Wait()
+	return c.runErr()
+}
+
+func (c *Consumer) recordErr(err error) {
+	if err == nil {
+		return
+	}
+	atomic.AddInt64(&c.errors, 1)
+	c.errMu.Lock()
+	if c.firstErr == nil {
+		c.firstErr = err
+	}
+	c.errMu.Unlock()
+}
+
+func (c *Consumer) runErr() error {
+	count := atomic.LoadInt64(&c.errors)
+	if count == 0 {
+		return nil
+	}
+	c.errMu.Lock()
+	first := c.firstErr
+	c.errMu.Unlock()
+	return &ConsumerRunError{First: first, Count: count}
+}
+
+func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Message) error {
+
+	defer func() {
+		if r := recover(); r != nil {
+			c.handleError(ctx, data, message)
+		}
+	}()
+
+	result, err := c.handler(ctx, message)
+	if err != nil {
+		return c.handleError(ctx, data, message)
+	}
+
+	switch result {
+	case core.REQUEUE:
+		if err := c.ackAndHook(ctx, data, message); err != nil {
+			return err
+		}
+		if err := c.driver.Requeue(ctx, data); err != nil {
+			return err
+		}
+		atomic.AddInt64(&c.requeued, 1)
+		if c.hooks.OnRequeue != nil {
+			c.hooks.OnRequeue(ctx, message)
+		}
+		return nil
+
+	case core.RETRY:
+		if err := c.ackAndHook(ctx, data, message); err != nil {
+			return err
+		}
+		if message.AttemptsAllowed() {
+			if err := c.driver.Retry(ctx, message); err != nil {
+				return err
+			}
+			atomic.AddInt64(&c.retried, 1)
+			if c.hooks.OnRetry != nil {
+				c.hooks.OnRetry(ctx, message)
+			}
+		}
+		return nil
+
+	case core.DROP:
+		if err := c.ackAndHook(ctx, data, message); err != nil {
+			return err
+		}
+		atomic.AddInt64(&c.dropped, 1)
+		if c.hooks.OnDrop != nil {
+			c.hooks.OnDrop(ctx, message)
+		}
+		return nil
+
+	case core.ACK:
+		fallthrough
+	default:
+		return c.ackAndHook(ctx, data, message)
+	}
+}
+
+// handleError processes a handler that returned an error: retry if attempts remain, otherwise fail.
+func (c *Consumer) handleError(ctx context.Context, data string, message *core.Message) error {
+	if message.AttemptsAllowed() {
+		if err := c.ackAndHook(ctx, data, message); err != nil {
+			return err
+		}
+		if err := c.driver.Retry(ctx, message); err != nil {
+			return err
+		}
+		atomic.AddInt64(&c.retried, 1)
+		if c.hooks.OnRetry != nil {
+			c.hooks.OnRetry(ctx, message)
+		}
+		return nil
+	}
+
+	if err := c.driver.Fail(ctx, data); err != nil {
+		return err
+	}
+	atomic.AddInt64(&c.failed, 1)
+	if c.hooks.OnFail != nil {
+		c.hooks.OnFail(ctx, message)
+	}
+	return nil
+}
+
+// ackAndHook performs Ack + updates counter + fires hook, eliminating repetition.
+func (c *Consumer) ackAndHook(ctx context.Context, data string, message *core.Message) error {
+	if err := c.driver.Ack(ctx, data); err != nil {
+		return err
+	}
+	atomic.AddInt64(&c.acked, 1)
+	if c.hooks.OnAck != nil {
+		c.hooks.OnAck(ctx, message)
+	}
+	return nil
+}

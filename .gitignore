@@ -1,0 +1,7 @@
+# Compiled binaries
+/ctl
+/producer
+/worker
+
+# Dependencies
+/vendor
