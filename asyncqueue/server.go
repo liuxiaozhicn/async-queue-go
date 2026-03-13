@@ -82,7 +82,7 @@ func (s *Server) Handle(queueName string, handler queue.Handler) {
 	if s == nil || s.serveMux == nil {
 		return
 	}
-	s.serveMux.Register(queueName, handler)
+	s.serveMux.Handle(queueName, handler)
 }
 
 // Bind registers one or more Jobs as handlers for their own queues.
@@ -91,7 +91,7 @@ func (s *Server) Bind(queueName string, handler queue.Handler) {
 	if s == nil || s.serveMux == nil {
 		return
 	}
-	s.serveMux.Register(queueName, handler)
+	s.serveMux.Handle(queueName, handler)
 }
 
 // Run merges all handlers from registry into the server, then starts
