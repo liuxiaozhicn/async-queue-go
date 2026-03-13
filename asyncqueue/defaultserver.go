@@ -3,6 +3,7 @@ package asyncqueue
 import (
 	"context"
 	"errors"
+	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
 	"log"
 	"sync/atomic"
 )
@@ -39,7 +40,7 @@ func Push(ctx context.Context, queueName string, job Job, delaySeconds int) erro
 }
 
 // PushMessage enqueues a raw Message on the named queue via the global Server.
-func PushMessage(ctx context.Context, queueName string, msg *Message, delaySeconds int) error {
+func PushMessage(ctx context.Context, queueName string, msg *core.Message, delaySeconds int) error {
 	q, err := GetQueue(queueName)
 	if err != nil {
 		return err

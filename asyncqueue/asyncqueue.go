@@ -6,24 +6,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/liuxiaozhicn/async-queue-go/internal/core"
-	"github.com/liuxiaozhicn/async-queue-go/internal/queue"
+	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
+	"github.com/liuxiaozhicn/async-queue-go/pkg/queue"
 	"github.com/redis/go-redis/v9"
 )
-
-type Result string
-
-const (
-	ACK   Result = Result(core.ACK)
-	RETRY Result = Result(core.RETRY)
-	DROP  Result = Result(core.DROP)
-)
-
-type Message struct {
-	Payload     json.RawMessage `json:"payload"`
-	Attempts    int             `json:"attempts"`
-	MaxAttempts int             `json:"max_attempts"`
-}
 
 type Info struct {
 	Waiting  int64 `json:"waiting"`
@@ -69,24 +55,24 @@ func (q *Queue) PushJob(ctx context.Context, job Job, delaySeconds int) error {
 	if err != nil {
 		return fmt.Errorf("marshal job: %w", err)
 	}
-	return q.PushMessage(ctx, &Message{
+	return q.PushMessage(ctx, &core.Message{
 		Payload:     data,
 		MaxAttempts: q.maxAttempts, // Use configuration max_attempts instead of job's MaxAttempts
 	}, delaySeconds)
 }
 
-func (q *Queue) PushMessage(ctx context.Context, m *Message, delaySeconds int) error {
+func (q *Queue) PushMessage(ctx context.Context, m *core.Message, delaySeconds int) error {
 	if q == nil || q.driver == nil {
 		return errors.New("queue is nil")
 	}
 	if m == nil {
 		return errors.New("message is nil")
 	}
-	cm := &core.Message{Payload: m.Payload, Attempts: m.Attempts, MaxAttempts: m.MaxAttempts}
-	if cm.MaxAttempts <= 0 {
-		cm.MaxAttempts = 1
+
+	if m.MaxAttempts <= 0 {
+		m.MaxAttempts = 1
 	}
-	return q.driver.Push(ctx, cm, delaySeconds)
+	return q.driver.Push(ctx, m, delaySeconds)
 }
 
 func (q *Queue) Info(ctx context.Context) (Info, error) {
@@ -108,7 +94,7 @@ func (q *Queue) Reload(ctx context.Context, queueName string) (int, error) {
 }
 
 // DeleteMessage deletes a specific message from all queues
-func (q *Queue) DeleteMessage(ctx context.Context, m *Message) error {
+func (q *Queue) DeleteMessage(ctx context.Context, m *core.Message) error {
 	if q == nil || q.driver == nil {
 		return errors.New("queue is nil")
 	}
@@ -116,15 +102,8 @@ func (q *Queue) DeleteMessage(ctx context.Context, m *Message) error {
 		return fmt.Errorf("message must not be nil")
 	}
 
-	// Convert to core message
-	cm := &core.Message{
-		Payload:     m.Payload,
-		Attempts:    m.Attempts,
-		MaxAttempts: m.MaxAttempts,
-	}
-
 	// Call driver.Delete with core.Message
-	err := q.driver.Delete(ctx, cm)
+	err := q.driver.Delete(ctx, m)
 	if err != nil {
 		return fmt.Errorf("delete message: %w", err)
 	}
@@ -146,7 +125,7 @@ func (q *Queue) DeleteJob(ctx context.Context, job Job) error {
 	}
 
 	// Create message from job data
-	message := &Message{
+	message := &core.Message{
 		Payload:     data,
 		MaxAttempts: q.maxAttempts,
 		Attempts:    0,
@@ -163,4 +142,4 @@ func (q *Queue) Flush(ctx context.Context, queueName string) error {
 	return q.driver.Flush(ctx, queueName)
 }
 
-type Handler func(context.Context, *Message) (Result, error)
+//type Handler func(context.Context, *Message) (Result, error)

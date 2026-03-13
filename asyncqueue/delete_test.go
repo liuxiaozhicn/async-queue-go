@@ -94,7 +94,7 @@ func TestQueueDeleteMessage(t *testing.T) {
 
 	// Create test message
 	payload, _ := json.Marshal(map[string]string{"test": "delete message"})
-	message := &Message{
+	message := &core.Message{
 		Payload:     payload,
 		MaxAttempts: 3,
 		Attempts:    0,

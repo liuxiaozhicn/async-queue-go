@@ -15,45 +15,12 @@ type testEmailJob struct {
 }
 
 func (j *testEmailJob) GetType() string { return "testEmailJob" }
-func (j *testEmailJob) Handle(_ context.Context) (Result, error) {
-	return ACK, nil
-}
 
 type testFailJob struct {
 	ShouldFail bool `json:"should_fail"`
 }
 
 func (j *testFailJob) GetType() string { return "testFailJob" }
-func (j *testFailJob) Handle(_ context.Context) (Result, error) {
-	if j.ShouldFail {
-		return RETRY, nil
-	}
-	return ACK, nil
-}
-
-func TestJobHandle(t *testing.T) {
-	t.Run("email job returns ACK", func(t *testing.T) {
-		j := &testEmailJob{To: "a@b.com", Subject: "hi", Body: "body"}
-		result, err := j.Handle(context.Background())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result != ACK {
-			t.Errorf("expected ACK, got %v", result)
-		}
-	})
-
-	t.Run("fail job returns RETRY when ShouldFail", func(t *testing.T) {
-		j := &testFailJob{ShouldFail: true}
-		result, err := j.Handle(context.Background())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result != RETRY {
-			t.Errorf("expected RETRY, got %v", result)
-		}
-	})
-}
 
 func TestPush(t *testing.T) {
 	t.Run("no default server returns error", func(t *testing.T) {

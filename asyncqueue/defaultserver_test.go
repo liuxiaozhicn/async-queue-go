@@ -3,6 +3,7 @@ package asyncqueue
 import (
 	"bytes"
 	"context"
+	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
 	"github.com/redis/go-redis/v9"
 	"log"
 	"os"
@@ -52,7 +53,7 @@ func TestDefault_PushWithNilGlobal(t *testing.T) {
 
 func TestDefault_PushMessageWithNilGlobal(t *testing.T) {
 	resetDefault(t)
-	err := PushMessage(context.Background(), "q", &Message{}, 0)
+	err := PushMessage(context.Background(), "q", &core.Message{}, 0)
 	if err == nil {
 		t.Fatal("expected error when no default server")
 	}
@@ -69,8 +70,7 @@ func TestDefault_GetQueueWithNilGlobal(t *testing.T) {
 // testDefaultJob is a minimal Job for use in this test file.
 type testDefaultJob struct{}
 
-func (j *testDefaultJob) GetType() string                          { return "testDefaultJob" }
-func (j *testDefaultJob) Handle(_ context.Context) (Result, error) { return ACK, nil }
+func (j *testDefaultJob) GetType() string { return "testDefaultJob" }
 
 func TestSetDefaultWithWarn_Overwrite(t *testing.T) {
 	resetDefault(t)

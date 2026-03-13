@@ -8,10 +8,18 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/liuxiaozhicn/async-queue-go/internal/core"
+	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
 )
 
-type Handler func(context.Context, *core.Message) (core.Result, error)
+type Handler interface {
+	Handle(context.Context, *core.Message) (core.Result, error)
+}
+
+type HandlerFunc func(context.Context, *core.Message) (core.Result, error)
+
+func (f HandlerFunc) Handle(ctx context.Context, m *core.Message) (core.Result, error) {
+	return f(ctx, m)
+}
 
 type ConsumerHooks struct {
 	OnAck     func(context.Context, *core.Message)
@@ -53,6 +61,8 @@ type Consumer struct {
 	maxMessages     int
 	hooks           ConsumerHooks
 
+	name string
+
 	processed int64
 	acked     int64
 	retried   int64
@@ -65,15 +75,15 @@ type Consumer struct {
 	firstErr error
 }
 
-func NewConsumer(driver Driver, handler Handler, concurrentLimit int, maxMessages int) *Consumer {
-	return NewConsumerWithHooks(driver, handler, concurrentLimit, maxMessages, ConsumerHooks{})
+func NewConsumer(driver Driver, handler Handler, concurrentLimit int, maxMessages int, name string) *Consumer {
+	return NewConsumerWithHooks(driver, handler, concurrentLimit, maxMessages, ConsumerHooks{}, name)
 }
 
-func NewConsumerWithHooks(driver Driver, handler Handler, concurrentLimit int, maxMessages int, hooks ConsumerHooks) *Consumer {
+func NewConsumerWithHooks(driver Driver, handler Handler, concurrentLimit int, maxMessages int, hooks ConsumerHooks, name string) *Consumer {
 	if concurrentLimit <= 0 {
 		concurrentLimit = 1
 	}
-	return &Consumer{driver: driver, handler: handler, concurrentLimit: concurrentLimit, maxMessages: maxMessages, hooks: hooks}
+	return &Consumer{driver: driver, handler: handler, concurrentLimit: concurrentLimit, maxMessages: maxMessages, hooks: hooks, name: name}
 }
 
 func (c *Consumer) Stats() ConsumerStats {
@@ -161,15 +171,16 @@ func (c *Consumer) runErr() error {
 }
 
 func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Message) error {
-
 	defer func() {
 		if r := recover(); r != nil {
+			log.Printf("[Consumer] handler panic: payload=%s attempts=%d/%d panic=%v", message.Payload, message.Attempts, message.MaxAttempts, r)
 			c.handleError(context.Background(), data, message)
 		}
 	}()
 
-	result, err := c.handler(ctx, message)
+	result, err := c.handler.Handle(ctx, message)
 	if err != nil {
+		log.Printf("[Consumer] handler error: payload=%s attempts=%d/%d error=%v", message.Payload, message.Attempts, message.MaxAttempts, err)
 		return c.handleError(ctx, data, message)
 	}
 

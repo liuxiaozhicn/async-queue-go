@@ -8,9 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/liuxiaozhicn/async-queue-go/internal/core"
-	iqueue "github.com/liuxiaozhicn/async-queue-go/internal/queue"
-	iworker "github.com/liuxiaozhicn/async-queue-go/internal/worker"
+	iqueue "github.com/liuxiaozhicn/async-queue-go/pkg/queue"
+	iworker "github.com/liuxiaozhicn/async-queue-go/pkg/worker"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -115,19 +114,16 @@ func (m *Manager) StartWorker() error {
 
 		workers := make([]*iworker.Worker, 0, queueCfg.Processes)
 		for i := 0; i < queueCfg.Processes; i++ {
-			consumer := iqueue.NewConsumer(queue.driver, func(ctx context.Context, m *core.Message) (core.Result, error) {
-				res, err := handler(ctx, &Message{Payload: m.Payload, Attempts: m.Attempts, MaxAttempts: m.MaxAttempts})
-				return core.Result(res), err
-			}, queueCfg.Concurrent, queueCfg.MaxMessages)
-			w := iworker.NewWorker(consumer)
+			consumer := iqueue.NewConsumer(queue.driver, handler, queueCfg.Concurrent, queueCfg.MaxMessages, name)
+			workerInstance := iworker.NewWorker(consumer)
 
-			workers = append(workers, w)
+			workers = append(workers, workerInstance)
 			m.wg.Add(1)
 
 			// Check if auto-restart is enabled for this queue
 			if queueCfg.AutoRestart && queueCfg.MaxMessages > 0 {
 				// Auto-restart mode: restart worker when it exits normally
-				go m.runWorkerWithAutoRestart(name, i, w, queue, handler, queueCfg)
+				go m.runWorkerWithAutoRestart(name, i, workerInstance, queue, handler, queueCfg)
 			} else {
 				// Normal mode: worker exits after max_messages or on error
 				go func(queueName string, processID int, worker *iworker.Worker) {
@@ -139,7 +135,7 @@ func (m *Manager) StartWorker() error {
 					if err := worker.Wait(); err != nil {
 						m.recordError(fmt.Errorf("queue %s process %d: %w", queueName, processID, err))
 					}
-				}(name, i, w)
+				}(name, i, workerInstance)
 			}
 		}
 
@@ -255,7 +251,7 @@ func (m *Manager) closeQueuesLocked() {
 }
 
 // runWorkerWithAutoRestart runs a worker and automatically restarts it when it exits normally.
-func (m *Manager) runWorkerWithAutoRestart(queueName string, processID int, w *iworker.Worker, q *Queue, handler Handler, cfg QueueConfig) {
+func (m *Manager) runWorkerWithAutoRestart(queueName string, processID int, w *iworker.Worker, q *Queue, handler iqueue.Handler, cfg QueueConfig) {
 	defer m.wg.Done()
 	restartCount := 0
 	for {
@@ -298,10 +294,7 @@ func (m *Manager) runWorkerWithAutoRestart(queueName string, processID int, w *i
 		}
 
 		// Create a new worker instance for restart
-		consumer := iqueue.NewConsumer(q.driver, func(ctx context.Context, m *core.Message) (core.Result, error) {
-			res, err := handler(ctx, &Message{Payload: m.Payload, Attempts: m.Attempts, MaxAttempts: m.MaxAttempts})
-			return core.Result(res), err
-		}, cfg.Concurrent, cfg.MaxMessages)
+		consumer := iqueue.NewConsumer(q.driver, handler, cfg.Concurrent, cfg.MaxMessages, queueName)
 		w = iworker.NewWorker(consumer)
 
 		restartCount++

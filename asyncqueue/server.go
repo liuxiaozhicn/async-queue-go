@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/liuxiaozhicn/async-queue-go/pkg/queue"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -77,7 +78,7 @@ func (s *Server) StartWorker() error {
 }
 
 // Handle registers a handler for a queue.
-func (s *Server) Handle(queueName string, handler Handler) {
+func (s *Server) Handle(queueName string, handler queue.Handler) {
 	if s == nil || s.serveMux == nil {
 		return
 	}
@@ -86,16 +87,11 @@ func (s *Server) Handle(queueName string, handler Handler) {
 
 // Bind registers one or more Jobs as handlers for their own queues.
 // The queue name for each job is taken from j.GetType().
-func (s *Server) Bind(jobs ...Job) {
+func (s *Server) Bind(queueName string, handler queue.Handler) {
 	if s == nil || s.serveMux == nil {
 		return
 	}
-	for _, j := range jobs {
-		if j == nil {
-			continue
-		}
-		s.serveMux.Register(j.GetType(), wrapJob(j))
-	}
+	s.serveMux.Register(queueName, handler)
 }
 
 // Run merges all handlers from registry into the server, then starts
@@ -109,7 +105,7 @@ func (s *Server) Run(ctx context.Context, serveMux *ServeMux) error {
 	if serveMux != nil {
 		serveMux.mu.RLock()
 		for name, h := range serveMux.handlers {
-			s.serveMux.Register(name, h)
+			s.serveMux.Handle(name, h)
 		}
 		serveMux.mu.RUnlock()
 	}

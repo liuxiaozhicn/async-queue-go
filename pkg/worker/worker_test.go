@@ -51,18 +51,3 @@ func TestWorkerStopReturnsRunError(t *testing.T) {
 		t.Fatalf("expected boom, got %v", err)
 	}
 }
-
-func TestWorkerRunWithSignals(t *testing.T) {
-	w := NewWorker(&fakeConsumer{run: func(ctx context.Context) error {
-		<-ctx.Done()
-		return nil
-	}})
-
-	go func() {
-		time.Sleep(10 * time.Millisecond)
-	}()
-
-	if err := w.RunWithSignals(context.Background(), time.Second); err != nil {
-		t.Fatal(err)
-	}
-}

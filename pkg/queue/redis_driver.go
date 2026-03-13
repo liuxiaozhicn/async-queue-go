@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/liuxiaozhicn/async-queue-go/internal/clock"
-	"github.com/liuxiaozhicn/async-queue-go/internal/core"
+	"github.com/liuxiaozhicn/async-queue-go/pkg/clock"
+	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
 	"github.com/redis/go-redis/v9"
 )
 

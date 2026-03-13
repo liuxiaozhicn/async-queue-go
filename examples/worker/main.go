@@ -12,9 +12,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/liuxiaozhicn/async-queue-go/internal/core"
-	"github.com/liuxiaozhicn/async-queue-go/internal/queue"
-	"github.com/liuxiaozhicn/async-queue-go/internal/worker"
+	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
+	"github.com/liuxiaozhicn/async-queue-go/pkg/queue"
+	"github.com/liuxiaozhicn/async-queue-go/pkg/worker"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -88,7 +88,7 @@ func run(ctx context.Context, args []string) error {
 	handler := func(ctx context.Context, m *core.Message) (core.Result, error) {
 		return core.ACK, nil
 	}
-	consumer := queue.NewConsumer(driver, handler, opts.concurrent, opts.maxMessages)
+	consumer := queue.NewConsumer(driver, queue.HandlerFunc(handler), opts.concurrent, opts.maxMessages, "")
 	w := worker.NewWorker(consumer)
 
 	// Start worker

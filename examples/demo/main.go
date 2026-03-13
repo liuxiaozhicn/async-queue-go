@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
+	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
 	"log"
 	"os"
 	"os/signal"
@@ -10,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/liuxiaozhicn/async-queue-go/pkg/asyncqueue"
+	"github.com/liuxiaozhicn/async-queue-go/asyncqueue"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -23,38 +25,16 @@ type OrderJob struct {
 
 func (j *OrderJob) GetType() string { return "order" }
 
-func (j *OrderJob) Handle(ctx context.Context) (asyncqueue.Result, error) {
-	log.Printf("[OrderJob] processing order #%d for user %d, total: %.2f", j.OrderID, j.UserID, j.TotalAmount)
+// OrderJobHandler handles order creation.
+type OrderJobHandler struct{}
+
+func (h *OrderJobHandler) Handle(ctx context.Context, m *core.Message) (core.Result, error) {
+	job := &OrderJob{}
+	_ = json.Unmarshal(m.Payload, job)
+	log.Printf("[OrderJob] processing order #%d for user %d, total: %.2f", job.OrderID, job.UserID, job.TotalAmount)
 	time.Sleep(10 * time.Second)
-	log.Printf("[OrderJob] order #%d handled successfully", j.OrderID)
-	return asyncqueue.ACK, nil
-}
-
-func pushSampleJobs(ctx context.Context, s *asyncqueue.Server) {
-	queue, err := s.Queue("order")
-	if err != nil {
-		log.Printf("[Push] failed to get queue: %v", err)
-		return
-	}
-
-	samples := []struct {
-		job   *OrderJob
-		delay int
-	}{
-		{&OrderJob{OrderID: 1001, UserID: 42, TotalAmount: 299.99}, 0},
-		{&OrderJob{OrderID: 1002, UserID: 99, TotalAmount: 59.90}, 3},
-		{&OrderJob{OrderID: 1003, UserID: 123, TotalAmount: 149.50}, 0},
-	}
-
-	log.Println("[Push] pushing sample jobs")
-	for _, s := range samples {
-		if err := queue.PushJob(ctx, s.job, s.delay); err != nil {
-			log.Printf("[Push] failed to push order #%d: %v", s.job.OrderID, err)
-		} else {
-			log.Printf("[Push] order #%d pushed (delay=%ds)", s.job.OrderID, s.delay)
-		}
-	}
-	log.Println("[Push] all sample jobs pushed")
+	log.Printf("[OrderJob] order #%d handled successfully", job.OrderID)
+	return core.ACK, nil
 }
 
 func main() {
@@ -81,15 +61,29 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		serveMux := asyncqueue.NewServeMux()
+		orderJob := &OrderJob{}
+
+		orderJobHandler := &OrderJobHandler{}
+		// 1.queue.HandlerFunc func
+		//serveMux.Register(orderJob.GetType(), queue.HandlerFunc(func(ctx context.Context, m *core.Message) (core.Result, error) {
+		//	job := &OrderJob{}
+		//	_ = json.Unmarshal(m.Payload, job)
+		//	log.Printf("[OrderJob] processing order #%d for user %d, total: %.2f", job.OrderID, job.UserID, job.TotalAmount)
+		//	time.Sleep(10 * time.Second)
+		//	log.Printf("[OrderJob] order #%d handled successfully", job.OrderID)
+		//	return core.ACK, nil
+		//}))
+		// 2.queue.Handler interface
+		serveMux.Handle(orderJob.GetType(), orderJobHandler)
 		log.Println("[Worker] started, listening on order queue")
-		if err := s.Run(ctx, asyncqueue.NewServeMux(&OrderJob{})); err != nil {
+		if err := s.Run(ctx, serveMux); err != nil {
 			log.Printf("[Worker] error: %v", err)
 		}
 	}()
 
 	// Push initial sample jobs after worker is ready
 	time.Sleep(1 * time.Second)
-	pushSampleJobs(ctx, s)
 
 	// Push periodic jobs every 10s
 	wg.Add(1)
@@ -116,9 +110,9 @@ func main() {
 					TotalAmount: float64(orderID%500 + 50),
 				}
 				if err := queue.PushJob(ctx, job, 0); err != nil {
-					log.Printf("[Push] push order  job error: %v", err)
+					log.Printf("[Push] order job error: %v", err)
 				} else {
-					log.Printf("[Push] order job  #%d pushed", orderID)
+					log.Printf("[Push] order job  #%d success", orderID)
 				}
 			}
 		}

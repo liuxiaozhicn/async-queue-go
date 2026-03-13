@@ -3,8 +3,10 @@ package asyncqueue
 import (
 	"context"
 	"encoding/json"
+	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
 	"testing"
 
+	"github.com/liuxiaozhicn/async-queue-go/pkg/queue"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -20,11 +22,11 @@ func TestQueuePushMessageAndInfo(t *testing.T) {
 
 	ctx := context.Background()
 	payload1, _ := json.Marshal(map[string]int{"id": 1})
-	if err := q.PushMessage(ctx, &Message{Payload: payload1, MaxAttempts: 2}, 0); err != nil {
+	if err := q.PushMessage(ctx, &core.Message{Payload: payload1, MaxAttempts: 2}, 0); err != nil {
 		t.Fatal(err)
 	}
 	payload2, _ := json.Marshal(map[string]int{"id": 2})
-	if err := q.PushMessage(ctx, &Message{Payload: payload2, MaxAttempts: 2}, 5); err != nil {
+	if err := q.PushMessage(ctx, &core.Message{Payload: payload2, MaxAttempts: 2}, 5); err != nil {
 		t.Fatal(err)
 	}
 
@@ -50,7 +52,7 @@ func TestWorkerConsumesMessage(t *testing.T) {
 
 	ctx := context.Background()
 	payload, _ := json.Marshal(map[string]string{"kind": "once"})
-	if err := q.PushMessage(ctx, &Message{Payload: payload, MaxAttempts: 2}, 0); err != nil {
+	if err := q.PushMessage(ctx, &core.Message{Payload: payload, MaxAttempts: 2}, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -70,10 +72,10 @@ func TestWorkerConsumesMessage(t *testing.T) {
 		},
 	}
 	serveMux := NewServeMux()
-	serveMux.Register("test", func(_ context.Context, _ *Message) (Result, error) {
+	serveMux.Register("test", queue.HandlerFunc(func(_ context.Context, _ *core.Message) (core.Result, error) {
 		called++
-		return ACK, nil
-	})
+		return core.ACK, nil
+	}))
 	manager, err := NewManagerWithRedis(cfg, serveMux, client)
 	if err != nil {
 		t.Fatal(err)
@@ -184,15 +186,10 @@ func TestWorkerConsumesJobMessage(t *testing.T) {
 		},
 	}
 	serveMux := NewServeMux()
-	serveMux.Register("test", func(ctx context.Context, m *Message) (Result, error) {
+	serveMux.Register("test", queue.HandlerFunc(func(ctx context.Context, m *core.Message) (core.Result, error) {
 		called++
-		var j testEmailJob
-		if err := json.Unmarshal(m.Payload, &j); err != nil {
-			return DROP, err
-		}
-		receivedJob = &j
-		return ACK, nil
-	})
+		return core.ACK, nil
+	}))
 	manager, err := NewManagerWithRedis(cfg, serveMux, client)
 	if err != nil {
 		t.Fatal(err)

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/liuxiaozhicn/async-queue-go/internal/core"
+	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
 )
 
 type fakeDriver struct {
@@ -109,9 +109,11 @@ func TestConsumerResultRouting(t *testing.T) {
 				data string
 				msg  *core.Message
 			}{{data: "raw", msg: msg}}}
-			c := NewConsumer(d, func(context.Context, *core.Message) (core.Result, error) {
+
+			handler := HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
 				return tc.result, tc.err
-			}, 1, 1)
+			})
+			c := NewConsumer(d, handler, 1, 1, "")
 			if err := c.Run(context.Background()); err != nil {
 				t.Fatal(err)
 			}
@@ -132,7 +134,7 @@ func TestConsumerMaxMessagesAndConcurrency(t *testing.T) {
 		}{data: "x", msg: core.NewMessage([]byte(`{}`), 2)})
 	}
 
-	c := NewConsumer(d, func(context.Context, *core.Message) (core.Result, error) {
+	c := NewConsumer(d, HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
 		in := atomic.AddInt32(&d.inFlight, 1)
 		for {
 			old := atomic.LoadInt32(&d.maxInFlight)
@@ -143,7 +145,7 @@ func TestConsumerMaxMessagesAndConcurrency(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 		atomic.AddInt32(&d.inFlight, -1)
 		return core.ACK, nil
-	}, 3, 7)
+	}), 3, 7, "")
 
 	if err := c.Run(context.Background()); err != nil {
 		t.Fatal(err)
@@ -165,9 +167,9 @@ func TestConsumerRunReturnsAggregatedErrors(t *testing.T) {
 		}{data: "x", msg: core.NewMessage([]byte(`{}`), 2)})
 	}
 
-	c := NewConsumer(d, func(context.Context, *core.Message) (core.Result, error) {
+	c := NewConsumer(d, HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
 		return core.ACK, nil
-	}, 2, 3)
+	}), 2, 3, "")
 
 	err := c.Run(context.Background())
 	if err == nil {
@@ -201,11 +203,11 @@ func TestConsumerHooksAndStats(t *testing.T) {
 	ackN, retryN, requeueN, dropN := 0, 0, 0, 0
 	results := []core.Result{core.ACK, core.RETRY, core.REQUEUE, core.DROP}
 	idx := 0
-	c := NewConsumerWithHooks(d, func(context.Context, *core.Message) (core.Result, error) {
+	c := NewConsumerWithHooks(d, HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
 		res := results[idx]
 		idx++
 		return res, nil
-	}, 1, 4, ConsumerHooks{
+	}), 1, 4, ConsumerHooks{
 		OnAck: func(context.Context, *core.Message) { ackN++ },
 		OnRetry: func(context.Context, *core.Message) {
 			retryN++
@@ -216,7 +218,7 @@ func TestConsumerHooksAndStats(t *testing.T) {
 		OnDrop: func(context.Context, *core.Message) {
 			dropN++
 		},
-	})
+	}, "")
 
 	if err := c.Run(context.Background()); err != nil {
 		t.Fatal(err)
@@ -242,11 +244,11 @@ func TestConsumerShutdownDrainsInFlight(t *testing.T) {
 	started := make(chan struct{}, 2)
 	release := make(chan struct{})
 	ctx, cancel := context.WithCancel(context.Background())
-	c := NewConsumer(d, func(context.Context, *core.Message) (core.Result, error) {
+	c := NewConsumer(d, HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
 		started <- struct{}{}
 		<-release
 		return core.ACK, nil
-	}, 2, 2)
+	}), 2, 2, "")
 
 	done := make(chan error, 1)
 	go func() {

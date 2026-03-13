@@ -3,7 +3,7 @@ package queue
 import (
 	"context"
 
-	"github.com/liuxiaozhicn/async-queue-go/internal/core"
+	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
 )
 
 type Info struct {
