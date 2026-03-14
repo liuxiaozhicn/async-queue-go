@@ -93,12 +93,20 @@ func (d *RedisDriver) Pop(ctx context.Context) (string, *core.Message, error) {
 	return data, msg, nil
 }
 
-func (d *RedisDriver) Ack(ctx context.Context, data string) error {
+// Remove removes data from the reserved queue. Used by RETRY/REQUEUE/DROP
+// and internally by Ack/Fail. Mirrors PHP's protected remove() method.
+func (d *RedisDriver) Remove(ctx context.Context, data string) error {
 	return d.client.ZRem(ctx, d.keys.Reserved, data).Err()
 }
 
+// Ack acknowledges successful processing by removing from reserved queue.
+func (d *RedisDriver) Ack(ctx context.Context, data string) error {
+	return d.Remove(ctx, data)
+}
+
+// Fail removes from reserved queue and pushes to failed queue.
 func (d *RedisDriver) Fail(ctx context.Context, data string) error {
-	if err := d.Ack(ctx, data); err != nil {
+	if err := d.Remove(ctx, data); err != nil {
 		return err
 	}
 	return d.client.LPush(ctx, d.keys.Failed, data).Err()

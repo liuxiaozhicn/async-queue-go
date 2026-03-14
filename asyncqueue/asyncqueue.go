@@ -40,11 +40,11 @@ func NewAsyncQueue(client redis.UniversalClient, channel string, timeoutSeconds 
 	return &Queue{client: client, driver: driver, maxAttempts: maxAttempts}, nil
 }
 
+// Close releases queue-local resources.
+// It does NOT close the shared Redis client — the caller who created
+// the client is responsible for closing it.
 func (q *Queue) Close() error {
-	if q == nil || q.client == nil {
-		return nil
-	}
-	return q.client.Close()
+	return nil
 }
 
 func (q *Queue) PushJob(ctx context.Context, job Job, delaySeconds int) error {
