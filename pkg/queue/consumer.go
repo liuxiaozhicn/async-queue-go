@@ -59,6 +59,7 @@ type Consumer struct {
 	handler         Handler
 	concurrentLimit int
 	maxMessages     int
+	handleTimeout   time.Duration
 	hooks           ConsumerHooks
 
 	name string
@@ -75,15 +76,15 @@ type Consumer struct {
 	firstErr error
 }
 
-func NewConsumer(driver Driver, handler Handler, concurrentLimit int, maxMessages int, name string) *Consumer {
-	return NewConsumerWithHooks(driver, handler, concurrentLimit, maxMessages, ConsumerHooks{}, name)
+func NewConsumer(driver Driver, handler Handler, concurrentLimit int, maxMessages int, handleTimeout time.Duration, name string) *Consumer {
+	return NewConsumerWithHooks(driver, handler, concurrentLimit, maxMessages, handleTimeout, ConsumerHooks{}, name)
 }
 
-func NewConsumerWithHooks(driver Driver, handler Handler, concurrentLimit int, maxMessages int, hooks ConsumerHooks, name string) *Consumer {
+func NewConsumerWithHooks(driver Driver, handler Handler, concurrentLimit int, maxMessages int, handleTimeout time.Duration, hooks ConsumerHooks, name string) *Consumer {
 	if concurrentLimit <= 0 {
 		concurrentLimit = 1
 	}
-	return &Consumer{driver: driver, handler: handler, concurrentLimit: concurrentLimit, maxMessages: maxMessages, hooks: hooks, name: name}
+	return &Consumer{driver: driver, handler: handler, concurrentLimit: concurrentLimit, maxMessages: maxMessages, handleTimeout: handleTimeout, hooks: hooks, name: name}
 }
 
 func (c *Consumer) Stats() ConsumerStats {
@@ -178,7 +179,16 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 		}
 	}()
 
-	result, err := c.handler.Handle(ctx, message)
+	// Enforce handle_timeout at the framework level so handlers
+	// can simply listen on ctx.Done() for timeout cancellation.
+	handlerCtx := ctx
+	if c.handleTimeout > 0 {
+		var cancel context.CancelFunc
+		handlerCtx, cancel = context.WithTimeout(ctx, c.handleTimeout)
+		defer cancel()
+	}
+
+	result, err := c.handler.Handle(handlerCtx, message)
 	if err != nil {
 		log.Printf("[Consumer] handler error: payload=%s attempts=%d/%d error=%v", message.Payload, message.Attempts, message.MaxAttempts, err)
 		return c.handleError(context.WithoutCancel(ctx), data, message)

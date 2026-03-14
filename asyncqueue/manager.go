@@ -114,7 +114,7 @@ func (m *Manager) StartWorker() error {
 
 		workers := make([]*iworker.Worker, 0, queueCfg.Processes)
 		for i := 0; i < queueCfg.Processes; i++ {
-			consumer := iqueue.NewConsumer(queue.driver, handler, queueCfg.Concurrent, queueCfg.MaxMessages, name)
+			consumer := iqueue.NewConsumer(queue.driver, handler, queueCfg.Concurrent, queueCfg.MaxMessages, time.Duration(queueCfg.HandleTimeout)*time.Second, name)
 			workerInstance := iworker.NewWorker(consumer)
 
 			workers = append(workers, workerInstance)
@@ -294,7 +294,7 @@ func (m *Manager) runWorkerWithAutoRestart(queueName string, processID int, w *i
 		}
 
 		// Create a new worker instance for restart
-		consumer := iqueue.NewConsumer(q.driver, handler, cfg.Concurrent, cfg.MaxMessages, queueName)
+		consumer := iqueue.NewConsumer(q.driver, handler, cfg.Concurrent, cfg.MaxMessages, time.Duration(cfg.HandleTimeout)*time.Second, queueName)
 		w = iworker.NewWorker(consumer)
 
 		restartCount++

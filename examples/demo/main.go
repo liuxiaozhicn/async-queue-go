@@ -46,32 +46,22 @@ type SlowJob struct {
 func (j *SlowJob) GetType() string { return "slow" }
 
 // SlowJobHandler simulates a job that exceeds the handle_timeout (30s in config).
-// It uses context.WithTimeout to enforce the timeout at the Go level
-// and checks ctx.Done() to detect cancellation.
-type SlowJobHandler struct {
-	HandleTimeout time.Duration
-}
+// The timeout context is injected by the Consumer framework, so the handler
+// only needs to listen on ctx.Done() to detect cancellation.
+type SlowJobHandler struct{}
 
 func (h *SlowJobHandler) Handle(ctx context.Context, m *core.Message) (core.Result, error) {
 	job := &SlowJob{}
 	_ = json.Unmarshal(m.Payload, job)
 
-	timeout := h.HandleTimeout
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	log.Printf("[SlowJob] task #%d started, will sleep 35s (handle_timeout=%v)", job.TaskID, timeout)
+	log.Printf("[SlowJob] task #%d started, will sleep 35s (handle_timeout is enforced by consumer ctx)", job.TaskID)
 
 	select {
 	case <-time.After(35 * time.Second):
-		// This branch should NOT be reached if timeout < 35s
 		log.Printf("[SlowJob] task #%d completed (no timeout triggered)", job.TaskID)
 		return core.ACK, nil
 	case <-ctx.Done():
-		log.Printf("[SlowJob] task #%d timed out after %v: %v", job.TaskID, timeout, ctx.Err())
+		log.Printf("[SlowJob] task #%d timed out: %v", job.TaskID, ctx.Err())
 		return core.RETRY, ctx.Err()
 	}
 }
@@ -118,7 +108,7 @@ func main() {
 
 		// Register slow job handler — demonstrates handle_timeout (30s) validation
 		slowJob := &SlowJob{}
-		serveMux.Handle(slowJob.GetType(), &SlowJobHandler{HandleTimeout: 30 * time.Second})
+		serveMux.Handle(slowJob.GetType(), &SlowJobHandler{})
 
 		log.Println("[Worker] started, listening on order and slow queues")
 		if err := s.Run(ctx, serveMux); err != nil {

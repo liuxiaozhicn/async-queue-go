@@ -130,7 +130,7 @@ func TestConsumerResultRouting(t *testing.T) {
 			handler := HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
 				return tc.result, tc.err
 			})
-			c := NewConsumer(d, handler, 1, 1, "")
+			c := NewConsumer(d, handler, 1, 1, 0, "")
 			if err := c.Run(context.Background()); err != nil {
 				t.Fatal(err)
 			}
@@ -163,7 +163,7 @@ func TestConsumerMaxMessagesAndConcurrency(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 		atomic.AddInt32(&d.inFlight, -1)
 		return core.ACK, nil
-	}), 3, 7, "")
+	}), 3, 7, 0, "")
 
 	if err := c.Run(context.Background()); err != nil {
 		t.Fatal(err)
@@ -187,7 +187,7 @@ func TestConsumerRunReturnsAggregatedErrors(t *testing.T) {
 
 	c := NewConsumer(d, HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
 		return core.ACK, nil
-	}), 2, 3, "")
+	}), 2, 3, 0, "")
 
 	err := c.Run(context.Background())
 	if err == nil {
@@ -225,7 +225,7 @@ func TestConsumerHooksAndStats(t *testing.T) {
 		res := results[idx]
 		idx++
 		return res, nil
-	}), 1, 4, ConsumerHooks{
+	}), 1, 4, 0, ConsumerHooks{
 		OnAck: func(context.Context, *core.Message) { ackN++ },
 		OnRetry: func(context.Context, *core.Message) {
 			retryN++
@@ -268,7 +268,7 @@ func TestConsumerShutdownDrainsInFlight(t *testing.T) {
 		started <- struct{}{}
 		<-release
 		return core.ACK, nil
-	}), 2, 2, "")
+	}), 2, 2, 0, "")
 
 	done := make(chan error, 1)
 	go func() {
