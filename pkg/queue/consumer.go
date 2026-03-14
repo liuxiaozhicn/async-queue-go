@@ -181,7 +181,7 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 	result, err := c.handler.Handle(ctx, message)
 	if err != nil {
 		log.Printf("[Consumer] handler error: payload=%s attempts=%d/%d error=%v", message.Payload, message.Attempts, message.MaxAttempts, err)
-		return c.handleError(ctx, data, message)
+		return c.handleError(context.WithoutCancel(ctx), data, message)
 	}
 
 	// The handler has finished; now we must commit the message disposition
@@ -191,7 +191,7 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 	atomicCtx := context.WithoutCancel(ctx)
 	switch result {
 	case core.REQUEUE:
-		if err := c.ackAndHook(atomicCtx, data, message); err != nil {
+		if err := c.remove(atomicCtx, data); err != nil {
 			return err
 		}
 		if err := c.driver.Requeue(atomicCtx, data); err != nil {
@@ -204,7 +204,7 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 		return nil
 
 	case core.RETRY:
-		if err := c.ackAndHook(atomicCtx, data, message); err != nil {
+		if err := c.remove(atomicCtx, data); err != nil {
 			return err
 		}
 		if message.AttemptsAllowed() {
@@ -215,11 +215,20 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 			if c.hooks.OnRetry != nil {
 				c.hooks.OnRetry(atomicCtx, message)
 			}
+		} else {
+			// Attempts exhausted — move to failed queue (matches PHP error path)
+			if err := c.driver.Fail(atomicCtx, data); err != nil {
+				return err
+			}
+			atomic.AddInt64(&c.failed, 1)
+			if c.hooks.OnFail != nil {
+				c.hooks.OnFail(atomicCtx, message)
+			}
 		}
 		return nil
 
 	case core.DROP:
-		if err := c.ackAndHook(atomicCtx, data, message); err != nil {
+		if err := c.remove(atomicCtx, data); err != nil {
 			return err
 		}
 		atomic.AddInt64(&c.dropped, 1)
@@ -236,9 +245,10 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 }
 
 // handleError processes a handler that returned an error: retry if attempts remain, otherwise fail.
+// Mirrors PHP: attempts() ? (remove + retry) : fail
 func (c *Consumer) handleError(ctx context.Context, data string, message *core.Message) error {
 	if message.AttemptsAllowed() {
-		if err := c.ackAndHook(ctx, data, message); err != nil {
+		if err := c.remove(ctx, data); err != nil {
 			return err
 		}
 		if err := c.driver.Retry(ctx, message); err != nil {
@@ -261,7 +271,14 @@ func (c *Consumer) handleError(ctx context.Context, data string, message *core.M
 	return nil
 }
 
-// ackAndHook performs Ack + updates counter + fires hook, eliminating repetition.
+// remove removes data from the reserved queue without counting as an ack.
+// Used for RETRY/REQUEUE/DROP — the message is not "successfully processed".
+func (c *Consumer) remove(ctx context.Context, data string) error {
+	return c.driver.Ack(ctx, data)
+}
+
+// ackAndHook acknowledges successful processing: removes from reserved,
+// increments acked counter, and fires OnAck hook. Only used for ACK result.
 func (c *Consumer) ackAndHook(ctx context.Context, data string, message *core.Message) error {
 	if err := c.driver.Ack(ctx, data); err != nil {
 		return err

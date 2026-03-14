@@ -89,12 +89,19 @@ func TestConsumerResultRouting(t *testing.T) {
 		maxAttempts  int
 		initialTries int
 	}{
+		// ACK: driver.Ack called once (via ackAndHook)
 		{name: "ack", result: core.ACK, wantAck: 1},
+		// DROP: driver.Ack called once (via remove)
 		{name: "drop", result: core.DROP, wantAck: 1},
+		// REQUEUE: driver.Ack (remove) + Requeue
 		{name: "requeue", result: core.REQUEUE, wantAck: 1, wantRequeue: 1},
+		// RETRY with attempts remaining: driver.Ack (remove) + Retry
 		{name: "retry", result: core.RETRY, wantAck: 1, wantRetry: 1},
-		{name: "retry over max", result: core.RETRY, wantAck: 1, maxAttempts: 1, initialTries: 1},
+		// RETRY with attempts exhausted: driver.Ack (remove) + Fail
+		{name: "retry over max", result: core.RETRY, wantAck: 1, wantFail: 1, maxAttempts: 1, initialTries: 1},
+		// Error with attempts remaining: driver.Ack (remove) + Retry
 		{name: "error retry", err: errors.New("boom"), wantAck: 1, wantRetry: 1},
+		// Error with attempts exhausted: Fail (no remove, Fail does its own Ack)
 		{name: "error fail", err: errors.New("boom"), wantFail: 1, maxAttempts: 1, initialTries: 1},
 	}
 
@@ -223,11 +230,13 @@ func TestConsumerHooksAndStats(t *testing.T) {
 	if err := c.Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if ackN != 4 || retryN != 1 || requeueN != 1 || dropN != 1 {
+	// OnAck fires only for ACK result (1 of 4 messages)
+	if ackN != 1 || retryN != 1 || requeueN != 1 || dropN != 1 {
 		t.Fatalf("unexpected hook counts ack=%d retry=%d requeue=%d drop=%d", ackN, retryN, requeueN, dropN)
 	}
 	stats := c.Stats()
-	if stats.Acked != 4 || stats.Retried != 1 || stats.Requeued != 1 || stats.Dropped != 1 {
+	// Acked=1 (only ACK), Retried=1, Requeued=1, Dropped=1
+	if stats.Acked != 1 || stats.Retried != 1 || stats.Requeued != 1 || stats.Dropped != 1 {
 		t.Fatalf("unexpected stats: %+v", stats)
 	}
 }

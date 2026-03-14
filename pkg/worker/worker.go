@@ -64,7 +64,6 @@ func (w *Worker) Wait() error {
 }
 
 func (w *Worker) Stop(graceTimeout time.Duration) error {
-	fmt.Printf("stop 执行")
 	w.mu.Lock()
 	done := w.done
 	cancel := w.cancel
