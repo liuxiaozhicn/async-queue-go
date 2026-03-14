@@ -114,7 +114,7 @@ func (m *Manager) StartWorker() error {
 
 		workers := make([]*iworker.Worker, 0, queueCfg.Processes)
 		for i := 0; i < queueCfg.Processes; i++ {
-			consumer := iqueue.NewConsumer(queue.driver, handler, queueCfg.Concurrent, queueCfg.MaxMessages, name)
+			consumer := iqueue.NewConsumer(queue.driver, handler, queueCfg.Concurrent, queueCfg.MaxMessages, name, queueCfg.HandleTimeout)
 			workerInstance := iworker.NewWorker(consumer)
 
 			workers = append(workers, workerInstance)
@@ -171,7 +171,7 @@ func (m *Manager) Stop(timeout time.Duration) error {
 		select {
 		case <-done:
 		case <-time.After(timeout):
-			return errors.New("manager stop timeout")
+			return errors.New("[manager] stop timeout")
 		}
 	}
 
@@ -180,7 +180,7 @@ func (m *Manager) Stop(timeout time.Duration) error {
 	m.closeQueuesLocked()
 	m.started = false
 	if len(m.errors) > 0 {
-		err = fmt.Errorf("manager stopped with %d errors: %v", len(m.errors), m.errors[0])
+		err = fmt.Errorf("[manager] stopped with %d errors: %v", len(m.errors), m.errors[0])
 	}
 	return err
 }
@@ -192,7 +192,7 @@ func (m *Manager) Wait() error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if len(m.errors) > 0 {
-		return fmt.Errorf("manager finished with %d errors: %v", len(m.errors), m.errors[0])
+		return fmt.Errorf("[manager] finished with %d errors: %v", len(m.errors), m.errors[0])
 	}
 	return nil
 }
@@ -294,7 +294,7 @@ func (m *Manager) runWorkerWithAutoRestart(queueName string, processID int, w *i
 		}
 
 		// Create a new worker instance for restart
-		consumer := iqueue.NewConsumer(q.driver, handler, cfg.Concurrent, cfg.MaxMessages, queueName)
+		consumer := iqueue.NewConsumer(q.driver, handler, cfg.Concurrent, cfg.MaxMessages, queueName, cfg.HandleTimeout)
 		w = iworker.NewWorker(consumer)
 
 		restartCount++

@@ -71,20 +71,23 @@ func (d *RedisDriver) Pop(ctx context.Context) (string, *core.Message, error) {
 	if err := d.move(ctx, d.keys.Reserved, d.keys.Timeout); err != nil {
 		return "", nil, err
 	}
-
-	res, err := d.client.BRPop(ctx, d.timeout, d.keys.Waiting).Result()
-	if errors.Is(err, redis.Nil) {
-		return "", nil, nil
+	score := fmt.Sprintf("%d", d.clock.Now().Add(d.handleTimeout).Unix())
+	res, err := popScript.Run(ctx, d.client, []string{d.keys.Waiting, d.keys.Reserved}, score).Result()
+	if err == redis.Nil || res == nil {
+		// Queue is empty, sleep to avoid busy-loop then return
+		select {
+		case <-ctx.Done():
+			return "", nil, ctx.Err()
+		case <-time.After(d.timeout):
+			return "", nil, nil
+		}
 	}
 	if err != nil {
 		return "", nil, err
 	}
-	if len(res) < 2 {
+	data, ok := res.(string)
+	if !ok {
 		return "", nil, nil
-	}
-	data := res[1]
-	if err := d.client.ZAdd(ctx, d.keys.Reserved, redis.Z{Score: float64(d.clock.Now().Add(d.handleTimeout).Unix()), Member: data}).Err(); err != nil {
-		return "", nil, err
 	}
 	msg, err := core.DecodeMessage(data)
 	if err != nil {
@@ -188,20 +191,9 @@ func (d *RedisDriver) Info(ctx context.Context) (Info, error) {
 
 func (d *RedisDriver) move(ctx context.Context, from string, to string) error {
 	now := fmt.Sprintf("%d", d.clock.Now().Unix())
-	expired, err := d.client.ZRevRangeByScore(ctx, from, &redis.ZRangeBy{Max: now, Min: "-inf", Offset: 0, Count: 100}).Result()
-	if err != nil {
-		return err
+	_, err := moveScript.Run(ctx, d.client, []string{from, to}, now).Result()
+	if errors.Is(err, redis.Nil) {
+		return nil
 	}
-	for _, job := range expired {
-		removed, err := d.client.ZRem(ctx, from, job).Result()
-		if err != nil {
-			return err
-		}
-		if removed > 0 {
-			if err := d.client.LPush(ctx, to, job).Err(); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return err
 }

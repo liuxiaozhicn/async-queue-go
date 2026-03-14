@@ -20,9 +20,10 @@ type Info struct {
 }
 
 type Queue struct {
-	client      redis.UniversalClient
-	driver      queue.Driver
-	maxAttempts int // Maximum retry attempts from configuration
+	client               redis.UniversalClient
+	driver               queue.Driver
+	maxAttempts          int // Maximum retry attempts from configuration
+	handleTimeoutSeconds int
 }
 
 // NewAsyncQueue creates a new async queue with external Redis client
@@ -37,7 +38,7 @@ func NewAsyncQueue(client redis.UniversalClient, channel string, timeoutSeconds 
 	}
 
 	driver := queue.NewRedisDriver(client, channel, timeoutSeconds, handleTimeoutSeconds, retrySeconds)
-	return &Queue{client: client, driver: driver, maxAttempts: maxAttempts}, nil
+	return &Queue{client: client, driver: driver, maxAttempts: maxAttempts, handleTimeoutSeconds: handleTimeoutSeconds}, nil
 }
 
 // Close releases queue-local resources.

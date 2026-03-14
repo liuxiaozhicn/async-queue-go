@@ -59,6 +59,7 @@ type Consumer struct {
 	handler         Handler
 	concurrentLimit int
 	maxMessages     int
+	handleTimeout   int
 	hooks           ConsumerHooks
 
 	name string
@@ -75,15 +76,15 @@ type Consumer struct {
 	firstErr error
 }
 
-func NewConsumer(driver Driver, handler Handler, concurrentLimit int, maxMessages int, name string) *Consumer {
-	return NewConsumerWithHooks(driver, handler, concurrentLimit, maxMessages, ConsumerHooks{}, name)
+func NewConsumer(driver Driver, handler Handler, concurrentLimit int, maxMessages int, name string, handleTimeout int) *Consumer {
+	return NewConsumerWithHooks(driver, handler, concurrentLimit, maxMessages, ConsumerHooks{}, name, handleTimeout)
 }
 
-func NewConsumerWithHooks(driver Driver, handler Handler, concurrentLimit int, maxMessages int, hooks ConsumerHooks, name string) *Consumer {
+func NewConsumerWithHooks(driver Driver, handler Handler, concurrentLimit int, maxMessages int, hooks ConsumerHooks, name string, handleTimeout int) *Consumer {
 	if concurrentLimit <= 0 {
 		concurrentLimit = 1
 	}
-	return &Consumer{driver: driver, handler: handler, concurrentLimit: concurrentLimit, maxMessages: maxMessages, hooks: hooks, name: name}
+	return &Consumer{driver: driver, handler: handler, concurrentLimit: concurrentLimit, maxMessages: maxMessages, hooks: hooks, name: name, handleTimeout: handleTimeout}
 }
 
 func (c *Consumer) Stats() ConsumerStats {
@@ -178,17 +179,18 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 		}
 	}()
 
-	result, err := c.handler.Handle(ctx, message)
-	if err != nil {
-		log.Printf("[Consumer] handler error: payload=%s attempts=%d/%d error=%v", message.Payload, message.Attempts, message.MaxAttempts, err)
-		return c.handleError(context.WithoutCancel(ctx), data, message)
-	}
-
+	handleCtx, cancel := context.WithTimeout(ctx, time.Duration(c.handleTimeout)*time.Second)
+	defer cancel()
+	result, err := c.handler.Handle(handleCtx, message)
 	// The handler has finished; now we must commit the message disposition
 	// (ack/retry/fail/requeue). This context is detached from cancellation
 	// to guarantee delivery semantics — a completed handler whose result
 	// is not committed leads to duplicate processing.
 	atomicCtx := context.WithoutCancel(ctx)
+	if err != nil {
+		log.Printf("[Consumer] handler error: payload=%s attempts=%d/%d error=%v", message.Payload, message.Attempts, message.MaxAttempts, err)
+		return c.handleError(atomicCtx, data, message)
+	}
 	switch result {
 	case core.REQUEUE:
 		if err := c.driver.Remove(atomicCtx, data); err != nil {

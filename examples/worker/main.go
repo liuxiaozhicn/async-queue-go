@@ -88,7 +88,7 @@ func run(ctx context.Context, args []string) error {
 	handler := func(ctx context.Context, m *core.Message) (core.Result, error) {
 		return core.ACK, nil
 	}
-	consumer := queue.NewConsumer(driver, queue.HandlerFunc(handler), opts.concurrent, opts.maxMessages, "")
+	consumer := queue.NewConsumer(driver, queue.HandlerFunc(handler), opts.concurrent, opts.maxMessages, "", opts.handleTimeout)
 	w := worker.NewWorker(consumer)
 
 	// Start worker
@@ -109,12 +109,12 @@ func run(ctx context.Context, args []string) error {
 }
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	if err := run(ctx, os.Args[1:]); err != nil {
 		b, _ := json.Marshal(map[string]string{"error": err.Error()})
-		_, _ = os.Stderr.Write(append(b, '\n'))
+		fmt.Fprintln(os.Stderr, string(b))
 		os.Exit(1)
 	}
 }

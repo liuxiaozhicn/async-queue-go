@@ -32,7 +32,15 @@ func (h *OrderJobHandler) Handle(ctx context.Context, m *core.Message) (core.Res
 	job := &OrderJob{}
 	_ = json.Unmarshal(m.Payload, job)
 	log.Printf("[OrderJob] processing order #%d for user %d, total: %.2f", job.OrderID, job.UserID, job.TotalAmount)
-	time.Sleep(10 * time.Second)
+
+	select {
+	case <-time.After(35 * time.Second):
+		log.Printf("[OrderJob] job #%d completed (no timeout triggered)", job.OrderID)
+		return core.ACK, nil
+	case <-ctx.Done():
+		log.Printf("[OrderJob] job #%d timed out: %v", job.OrderID, ctx.Err())
+		return core.RETRY, ctx.Err()
+	}
 	log.Printf("[OrderJob] order #%d handled successfully", job.OrderID)
 	return core.ACK, nil
 }
@@ -52,7 +60,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	var wg sync.WaitGroup
