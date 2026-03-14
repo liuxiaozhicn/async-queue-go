@@ -37,6 +37,45 @@ func (h *OrderJobHandler) Handle(ctx context.Context, m *core.Message) (core.Res
 	return core.ACK, nil
 }
 
+// SlowJob demonstrates handle_timeout validation.
+// It sleeps 35s, exceeding the configured 30s handle_timeout.
+type SlowJob struct {
+	TaskID int `json:"task_id"`
+}
+
+func (j *SlowJob) GetType() string { return "slow" }
+
+// SlowJobHandler simulates a job that exceeds the handle_timeout (30s in config).
+// It uses context.WithTimeout to enforce the timeout at the Go level
+// and checks ctx.Done() to detect cancellation.
+type SlowJobHandler struct {
+	HandleTimeout time.Duration
+}
+
+func (h *SlowJobHandler) Handle(ctx context.Context, m *core.Message) (core.Result, error) {
+	job := &SlowJob{}
+	_ = json.Unmarshal(m.Payload, job)
+
+	timeout := h.HandleTimeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	log.Printf("[SlowJob] task #%d started, will sleep 35s (handle_timeout=%v)", job.TaskID, timeout)
+
+	select {
+	case <-time.After(35 * time.Second):
+		// This branch should NOT be reached if timeout < 35s
+		log.Printf("[SlowJob] task #%d completed (no timeout triggered)", job.TaskID)
+		return core.ACK, nil
+	case <-ctx.Done():
+		log.Printf("[SlowJob] task #%d timed out after %v: %v", job.TaskID, timeout, ctx.Err())
+		return core.RETRY, ctx.Err()
+	}
+}
+
 func main() {
 	configFile := flag.String("config", "config.json", "config file path")
 	flag.Parse()
@@ -76,7 +115,12 @@ func main() {
 		//}))
 		// 2.queue.Handler interface
 		serveMux.Handle(orderJob.GetType(), orderJobHandler)
-		log.Println("[Worker] started, listening on order queue")
+
+		// Register slow job handler — demonstrates handle_timeout (30s) validation
+		slowJob := &SlowJob{}
+		serveMux.Handle(slowJob.GetType(), &SlowJobHandler{HandleTimeout: 30 * time.Second})
+
+		log.Println("[Worker] started, listening on order and slow queues")
 		if err := s.Run(ctx, serveMux); err != nil {
 			log.Printf("[Worker] error: %v", err)
 		}
@@ -85,7 +129,7 @@ func main() {
 	// Push initial sample jobs after worker is ready
 	time.Sleep(1 * time.Second)
 
-	// Push periodic jobs every 10s
+	// Push periodic order jobs every 5s
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -115,6 +159,24 @@ func main() {
 					log.Printf("[Push] order job  #%d success", orderID)
 				}
 			}
+		}
+	}()
+
+	// Push a slow job once to demonstrate handle_timeout validation
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		time.Sleep(3 * time.Second) // wait for worker to be ready
+		q, err := s.Queue("slow")
+		if err != nil {
+			log.Printf("[Push] failed to get slow queue: %v", err)
+			return
+		}
+		job := &SlowJob{TaskID: 1}
+		if err := q.PushJob(ctx, job, 0); err != nil {
+			log.Printf("[Push] slow job error: %v", err)
+		} else {
+			log.Printf("[Push] slow job #%d pushed — expects timeout after 30s", job.TaskID)
 		}
 	}()
 

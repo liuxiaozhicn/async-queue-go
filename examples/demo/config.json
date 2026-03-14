@@ -12,6 +12,19 @@
       "shutdown_timeout": 60,
       "enabled": true,
       "auto_restart": true
+    },
+    "slow": {
+      "channel": "queue:slow",
+      "timeout_seconds": 2,
+      "handle_timeout": 30,
+      "retry_seconds": [5, 10],
+      "max_attempts": 2,
+      "processes": 1,
+      "concurrent": 1,
+      "max_messages": 5,
+      "shutdown_timeout": 60,
+      "enabled": true,
+      "auto_restart": false
     }
   }
 }
