@@ -191,7 +191,7 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 	atomicCtx := context.WithoutCancel(ctx)
 	switch result {
 	case core.REQUEUE:
-		if err := c.remove(atomicCtx, data); err != nil {
+		if err := c.driver.Remove(atomicCtx, data); err != nil {
 			return err
 		}
 		if err := c.driver.Requeue(atomicCtx, data); err != nil {
@@ -204,7 +204,7 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 		return nil
 
 	case core.RETRY:
-		if err := c.remove(atomicCtx, data); err != nil {
+		if err := c.driver.Remove(atomicCtx, data); err != nil {
 			return err
 		}
 		if message.AttemptsAllowed() {
@@ -228,7 +228,7 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 		return nil
 
 	case core.DROP:
-		if err := c.remove(atomicCtx, data); err != nil {
+		if err := c.driver.Remove(atomicCtx, data); err != nil {
 			return err
 		}
 		atomic.AddInt64(&c.dropped, 1)
@@ -248,7 +248,7 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 // Mirrors PHP: attempts() ? (remove + retry) : fail
 func (c *Consumer) handleError(ctx context.Context, data string, message *core.Message) error {
 	if message.AttemptsAllowed() {
-		if err := c.remove(ctx, data); err != nil {
+		if err := c.driver.Remove(ctx, data); err != nil {
 			return err
 		}
 		if err := c.driver.Retry(ctx, message); err != nil {
@@ -269,12 +269,6 @@ func (c *Consumer) handleError(ctx context.Context, data string, message *core.M
 		c.hooks.OnFail(ctx, message)
 	}
 	return nil
-}
-
-// remove removes data from the reserved queue without counting as an ack.
-// Used for RETRY/REQUEUE/DROP — the message is not "successfully processed".
-func (c *Consumer) remove(ctx context.Context, data string) error {
-	return c.driver.Ack(ctx, data)
 }
 
 // ackAndHook acknowledges successful processing: removes from reserved,

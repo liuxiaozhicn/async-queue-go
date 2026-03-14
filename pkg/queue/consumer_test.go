@@ -18,11 +18,13 @@ type fakeDriver struct {
 		data string
 		msg  *core.Message
 	}
+	removeCalls  int
 	ackCalls     int
 	failCalls    int
 	retryCalls   int
 	requeueCalls int
 
+	removeErr  error
 	ackErr     error
 	failErr    error
 	retryErr   error
@@ -34,6 +36,13 @@ type fakeDriver struct {
 
 func (f *fakeDriver) Push(context.Context, *core.Message, int) error { return nil }
 func (f *fakeDriver) Delete(context.Context, *core.Message) error    { return nil }
+func (f *fakeDriver) Remove(_ context.Context, _ string) error {
+	f.mu.Lock()
+	f.removeCalls++
+	err := f.removeErr
+	f.mu.Unlock()
+	return err
+}
 func (f *fakeDriver) Pop(context.Context) (string, *core.Message, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -82,6 +91,7 @@ func TestConsumerResultRouting(t *testing.T) {
 		name         string
 		result       core.Result
 		err          error
+		wantRemove   int
 		wantAck      int
 		wantRetry    int
 		wantRequeue  int
@@ -89,19 +99,19 @@ func TestConsumerResultRouting(t *testing.T) {
 		maxAttempts  int
 		initialTries int
 	}{
-		// ACK: driver.Ack called once (via ackAndHook)
+		// ACK: driver.Ack (which internally calls Remove)
 		{name: "ack", result: core.ACK, wantAck: 1},
-		// DROP: driver.Ack called once (via remove)
-		{name: "drop", result: core.DROP, wantAck: 1},
-		// REQUEUE: driver.Ack (remove) + Requeue
-		{name: "requeue", result: core.REQUEUE, wantAck: 1, wantRequeue: 1},
-		// RETRY with attempts remaining: driver.Ack (remove) + Retry
-		{name: "retry", result: core.RETRY, wantAck: 1, wantRetry: 1},
-		// RETRY with attempts exhausted: driver.Ack (remove) + Fail
-		{name: "retry over max", result: core.RETRY, wantAck: 1, wantFail: 1, maxAttempts: 1, initialTries: 1},
-		// Error with attempts remaining: driver.Ack (remove) + Retry
-		{name: "error retry", err: errors.New("boom"), wantAck: 1, wantRetry: 1},
-		// Error with attempts exhausted: Fail (no remove, Fail does its own Ack)
+		// DROP: driver.Remove
+		{name: "drop", result: core.DROP, wantRemove: 1},
+		// REQUEUE: driver.Remove + Requeue
+		{name: "requeue", result: core.REQUEUE, wantRemove: 1, wantRequeue: 1},
+		// RETRY with attempts remaining: driver.Remove + Retry
+		{name: "retry", result: core.RETRY, wantRemove: 1, wantRetry: 1},
+		// RETRY with attempts exhausted: driver.Remove + Fail
+		{name: "retry over max", result: core.RETRY, wantRemove: 1, wantFail: 1, maxAttempts: 1, initialTries: 1},
+		// Error with attempts remaining: driver.Remove + Retry
+		{name: "error retry", err: errors.New("boom"), wantRemove: 1, wantRetry: 1},
+		// Error with attempts exhausted: driver.Fail (Fail internally calls Remove)
 		{name: "error fail", err: errors.New("boom"), wantFail: 1, maxAttempts: 1, initialTries: 1},
 	}
 
@@ -125,8 +135,9 @@ func TestConsumerResultRouting(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if d.ackCalls != tc.wantAck || d.retryCalls != tc.wantRetry || d.requeueCalls != tc.wantRequeue || d.failCalls != tc.wantFail {
-				t.Fatalf("got ack=%d retry=%d requeue=%d fail=%d", d.ackCalls, d.retryCalls, d.requeueCalls, d.failCalls)
+			if d.removeCalls != tc.wantRemove || d.ackCalls != tc.wantAck || d.retryCalls != tc.wantRetry || d.requeueCalls != tc.wantRequeue || d.failCalls != tc.wantFail {
+				t.Fatalf("got remove=%d ack=%d retry=%d requeue=%d fail=%d",
+					d.removeCalls, d.ackCalls, d.retryCalls, d.requeueCalls, d.failCalls)
 			}
 		})
 	}
