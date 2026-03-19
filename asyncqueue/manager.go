@@ -82,7 +82,7 @@ func (m *Manager) StartWorker() error {
 	defer m.mu.Unlock()
 
 	if m.started {
-		return errors.New("manager already started")
+		return errors.New("[Manager] already started")
 	}
 
 	m.ctx, m.cancel = context.WithCancel(context.Background())
@@ -97,7 +97,7 @@ func (m *Manager) StartWorker() error {
 		handler, ok := m.serveMux.Get(name)
 		if !ok {
 			m.rollbackStartLocked()
-			return fmt.Errorf("handler not registered for queue: %s", name)
+			return fmt.Errorf("[Manager] handler not registered for queue: %s", name)
 		}
 
 		var queue *Queue
@@ -108,7 +108,7 @@ func (m *Manager) StartWorker() error {
 
 		if err != nil {
 			m.rollbackStartLocked()
-			return fmt.Errorf("create queue %s: %w", name, err)
+			return fmt.Errorf("[Manager] create queue %s: %w", name, err)
 		}
 		m.queues[name] = queue
 
@@ -129,11 +129,11 @@ func (m *Manager) StartWorker() error {
 				go func(queueName string, processID int, worker *iworker.Worker) {
 					defer m.wg.Done()
 					if err := worker.Start(m.ctx); err != nil {
-						m.recordError(fmt.Errorf("queue %s process %d start: %w", queueName, processID, err))
+						m.recordError(fmt.Errorf("[Manager] queue %s process %d start: %w", queueName, processID, err))
 						return
 					}
 					if err := worker.Wait(); err != nil {
-						m.recordError(fmt.Errorf("queue %s process %d: %w", queueName, processID, err))
+						m.recordError(fmt.Errorf("[Manager] queue %s process %d: %w", queueName, processID, err))
 					}
 				}(name, i, workerInstance)
 			}
@@ -154,7 +154,7 @@ func (m *Manager) Stop(timeout time.Duration) error {
 	m.mu.RUnlock()
 
 	if !started || cancel == nil {
-		return errors.New("manager not started")
+		return errors.New("[Manager] not started")
 	}
 
 	cancel()
@@ -171,7 +171,7 @@ func (m *Manager) Stop(timeout time.Duration) error {
 		select {
 		case <-done:
 		case <-time.After(timeout):
-			return errors.New("[manager] stop timeout")
+			return errors.New("[Manager] stop timeout")
 		}
 	}
 
@@ -180,7 +180,7 @@ func (m *Manager) Stop(timeout time.Duration) error {
 	m.closeQueuesLocked()
 	m.started = false
 	if len(m.errors) > 0 {
-		err = fmt.Errorf("[manager] stopped with %d errors: %v", len(m.errors), m.errors[0])
+		err = fmt.Errorf("[Manager] stopped with %d errors: %v", len(m.errors), m.errors[0])
 	}
 	return err
 }
@@ -192,7 +192,7 @@ func (m *Manager) Wait() error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if len(m.errors) > 0 {
-		return fmt.Errorf("[manager] finished with %d errors: %v", len(m.errors), m.errors[0])
+		return fmt.Errorf("[Manager] finished with %d errors: %v", len(m.errors), m.errors[0])
 	}
 	return nil
 }
@@ -282,7 +282,7 @@ func (m *Manager) runWorkerWithAutoRestart(queueName string, processID int, w *i
 		case <-m.ctx.Done():
 			// Manager is shutting down, don't restart
 			if err != nil {
-				m.recordError(fmt.Errorf("queue %s process %d: %w", queueName, processID, err))
+				m.recordError(fmt.Errorf("[Manager] queue %s process %d: %w", queueName, processID, err))
 			}
 			return
 		default:
@@ -290,7 +290,7 @@ func (m *Manager) runWorkerWithAutoRestart(queueName string, processID int, w *i
 
 		// Worker exited (likely reached max_messages), restart it
 		if err != nil {
-			m.recordError(fmt.Errorf("queue %s process %d: %w", queueName, processID, err))
+			m.recordError(fmt.Errorf("[Manager] queue %s process %d: %w", queueName, processID, err))
 		}
 
 		// Create a new worker instance for restart

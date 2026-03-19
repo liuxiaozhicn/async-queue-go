@@ -31,7 +31,7 @@ func (w *Worker) Start(ctx context.Context) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.started {
-		return errors.New("worker already started")
+		return errors.New("[Worker] already started")
 	}
 	w.ctx, w.cancel = context.WithCancel(ctx)
 	w.done = make(chan struct{})
@@ -53,7 +53,7 @@ func (w *Worker) Wait() error {
 	started := w.started
 	w.mu.Unlock()
 	if !started || done == nil {
-		return errors.New("worker not started")
+		return errors.New("[Worker] not started")
 	}
 	<-done
 	w.mu.Lock()
@@ -70,7 +70,7 @@ func (w *Worker) Stop(graceTimeout time.Duration) error {
 	started := w.started
 	w.mu.Unlock()
 	if !started || done == nil || cancel == nil {
-		return errors.New("worker not started")
+		return errors.New("[Worker] not started")
 	}
 
 	cancel()
@@ -97,7 +97,7 @@ func (w *Worker) Stop(graceTimeout time.Duration) error {
 		w.mu.Lock()
 		defer w.mu.Unlock()
 		w.resetLocked()
-		return fmt.Errorf("worker shutdown timeout exceeded")
+		return fmt.Errorf("[Worker] shutdown timeout exceeded")
 	}
 }
 

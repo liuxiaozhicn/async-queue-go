@@ -72,8 +72,8 @@ type Consumer struct {
 	dropped   int64
 	errors    int64
 
-	errMu    sync.Mutex
-	firstErr error
+	errMu         sync.Mutex
+	concurrentErr error
 }
 
 func NewConsumer(driver Driver, handler Handler, concurrentLimit int, maxMessages int, name string, handleTimeout int) *Consumer {
@@ -110,16 +110,17 @@ func (c *Consumer) Run(ctx context.Context) error {
 		}
 		select {
 		case <-ctx.Done():
-			log.Printf("[Consumer] context cancelled, waiting for in-flight jobs to finish...")
+			log.Printf("[Consumer] context cancelled, waiting for running jobs to finish...")
 			start := time.Now()
 			wg.Wait()
-			log.Printf("[Consumer] all in-flight jobs done, waited %v", time.Since(start))
+			log.Printf("[Consumer] all running jobs done, waited %v", time.Since(start))
 			return c.runErr()
 		default:
 		}
 
 		data, message, err := c.driver.Pop(ctx)
 		if err != nil {
+			c.recordErr(err)
 			if ctx.Err() != nil {
 				wg.Wait()
 				return c.runErr()
@@ -139,7 +140,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 			defer wg.Done()
 			defer func() { <-sem }()
 			if err := c.handleOne(ctx, data, msg); err != nil {
-				c.recordErr(err)
+				c.errCount(err)
 			}
 		}(data, message)
 	}
@@ -148,16 +149,18 @@ func (c *Consumer) Run(ctx context.Context) error {
 	return c.runErr()
 }
 
-func (c *Consumer) recordErr(err error) {
+func (c *Consumer) errCount(err error) {
 	if err == nil {
 		return
 	}
 	atomic.AddInt64(&c.errors, 1)
+
+}
+
+func (c *Consumer) recordErr(err error) {
 	c.errMu.Lock()
-	if c.firstErr == nil {
-		c.firstErr = err
-	}
-	c.errMu.Unlock()
+	defer c.errMu.Unlock()
+	c.concurrentErr = err
 }
 
 func (c *Consumer) runErr() error {
@@ -166,9 +169,9 @@ func (c *Consumer) runErr() error {
 		return nil
 	}
 	c.errMu.Lock()
-	first := c.firstErr
+	concurrentErr := c.concurrentErr
 	c.errMu.Unlock()
-	return &ConsumerRunError{First: first, Count: count}
+	return &ConsumerRunError{First: concurrentErr, Count: count}
 }
 
 func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Message) error {
