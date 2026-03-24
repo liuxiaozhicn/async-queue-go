@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 
 	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
 	"github.com/liuxiaozhicn/async-queue-go/pkg/queue"
@@ -22,12 +23,15 @@ type Info struct {
 type Queue struct {
 	client               redis.UniversalClient
 	driver               queue.Driver
-	maxAttempts          int // Maximum retry attempts from configuration
+	timeoutSeconds       int
 	handleTimeoutSeconds int
+	retrySeconds         []int
+	maxAttempts          int // Maximum retry attempts from configuration
+	name                 string
 }
 
 // NewAsyncQueue creates a new async queue with external Redis client
-func NewAsyncQueue(client redis.UniversalClient, channel string, timeoutSeconds int, handleTimeoutSeconds int, retrySeconds []int, maxAttempts int) (*Queue, error) {
+func NewAsyncQueue(client redis.UniversalClient, channel string, timeoutSeconds int, handleTimeoutSeconds int, retrySeconds []int, maxAttempts int, name string) (*Queue, error) {
 	if client == nil {
 		return nil, errors.New("redis client cannot be nil")
 	}
@@ -38,7 +42,7 @@ func NewAsyncQueue(client redis.UniversalClient, channel string, timeoutSeconds 
 	}
 
 	driver := queue.NewRedisDriver(client, channel, timeoutSeconds, handleTimeoutSeconds, retrySeconds)
-	return &Queue{client: client, driver: driver, maxAttempts: maxAttempts, handleTimeoutSeconds: handleTimeoutSeconds}, nil
+	return &Queue{client: client, driver: driver, handleTimeoutSeconds: handleTimeoutSeconds, retrySeconds: retrySeconds, maxAttempts: maxAttempts, name: name}, nil
 }
 
 // Close releases queue-local resources.
@@ -73,7 +77,14 @@ func (q *Queue) PushMessage(ctx context.Context, m *core.Message, delaySeconds i
 	if m.MaxAttempts <= 0 {
 		m.MaxAttempts = 1
 	}
-	return q.driver.Push(ctx, m, delaySeconds)
+	err := q.driver.Push(ctx, m, delaySeconds)
+	if err != nil {
+		log.Printf("[Queue:%s] PUSH｜FAIL payload=%s delay=%ds error=%v", q.name, m.Payload, delaySeconds, err)
+		return err
+	}
+
+	log.Printf("[Queue:%s] PUSH｜payload=%s delay=%ds maxAttempts=%d", q.name, m.Payload, delaySeconds, m.MaxAttempts)
+	return nil
 }
 
 func (q *Queue) Info(ctx context.Context) (Info, error) {
@@ -142,5 +153,3 @@ func (q *Queue) Flush(ctx context.Context, queueName string) error {
 	}
 	return q.driver.Flush(ctx, queueName)
 }
-
-//type Handler func(context.Context, *Message) (Result, error)

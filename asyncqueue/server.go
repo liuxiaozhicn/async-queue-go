@@ -3,6 +3,7 @@ package asyncqueue
 import (
 	"context"
 	"errors"
+	"log"
 	"time"
 
 	"github.com/liuxiaozhicn/async-queue-go/pkg/queue"
@@ -69,14 +70,6 @@ func NewServerFromConfig(path string, redisClient redis.UniversalClient, opts ..
 	return LoadServer(path, redisClient, opts...)
 }
 
-// StartWorker starts all queue workers without blocking.
-func (s *Server) StartWorker() error {
-	if s == nil || s.manager == nil {
-		return errors.New("server is nil")
-	}
-	return s.manager.StartWorker()
-}
-
 // Handle registers a handler for a queue.
 func (s *Server) Handle(queueName string, handler queue.Handler) {
 	if s == nil || s.serveMux == nil {
@@ -109,7 +102,15 @@ func (s *Server) Run(ctx context.Context, serveMux *ServeMux) error {
 		}
 		serveMux.mu.RUnlock()
 	}
-	return s.manager.Run(ctx, s.shutdownTimeout())
+	log.Printf("[Async Queue Server] starting | queues=%d", len(s.config.Queues))
+
+	err := s.manager.Run(ctx, s.shutdownTimeout())
+	if err != nil {
+		log.Printf("[Async Queue Server] exited with error | %v", err)
+	} else {
+		log.Printf("[Async Queue Server] stopped gracefully")
+	}
+	return err
 }
 
 // Stop gracefully stops the server.

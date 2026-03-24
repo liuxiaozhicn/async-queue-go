@@ -8,9 +8,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
-	"time"
 )
 
 type bindTestJob struct {
@@ -93,48 +91,6 @@ func TestServerLoadAndLifecycle(t *testing.T) {
 		}
 		if got == nil {
 			t.Fatal("handler is nil")
-		}
-	})
-
-	t.Run("start without handler returns error", func(t *testing.T) {
-		s, err := NewServer(&Config{
-			Queues: map[string]QueueConfig{
-				"default": {Channel: "{queue}", Enabled: true},
-			},
-		}, client)
-		if err != nil {
-			t.Fatalf("NewServer failed: %v", err)
-		}
-
-		err = s.StartWorker()
-		if err == nil || !strings.Contains(err.Error(), "handler not registered") {
-			t.Fatalf("expected missing handler error, got %v", err)
-		}
-	})
-
-	t.Run("can restart after stop", func(t *testing.T) {
-		s, err := NewServer(&Config{
-			Queues: map[string]QueueConfig{
-				"default": {Channel: "{queue}", Enabled: false},
-			},
-		}, client)
-		if err != nil {
-			t.Fatalf("NewServer failed: %v", err)
-		}
-
-		s.Handle("default", queue.HandlerFunc(func(context.Context, *core.Message) (core.Result, error) { return core.ACK, nil }))
-		if err := s.StartWorker(); err != nil {
-			t.Fatalf("first start failed: %v", err)
-		}
-		if err := s.Stop(time.Second); err != nil {
-			t.Fatalf("first stop failed: %v", err)
-		}
-
-		if err := s.StartWorker(); err != nil {
-			t.Fatalf("second start failed: %v", err)
-		}
-		if err := s.Stop(time.Second); err != nil {
-			t.Fatalf("second stop failed: %v", err)
 		}
 	})
 

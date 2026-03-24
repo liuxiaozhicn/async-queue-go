@@ -8,12 +8,12 @@ import (
 	"time"
 )
 
-type Consumer interface {
+type Runner interface {
 	Run(context.Context) error
 }
 
 type Worker struct {
-	consumer Consumer
+	runner Runner
 
 	mu      sync.Mutex
 	started bool
@@ -23,8 +23,8 @@ type Worker struct {
 	err     error         // consumer result, guarded by mu
 }
 
-func NewWorker(consumer Consumer) *Worker {
-	return &Worker{consumer: consumer}
+func NewWorker(runner Runner) *Worker {
+	return &Worker{runner: runner}
 }
 
 func (w *Worker) Start(ctx context.Context) error {
@@ -38,7 +38,7 @@ func (w *Worker) Start(ctx context.Context) error {
 	w.err = nil
 	w.started = true
 	go func() {
-		err := w.consumer.Run(w.ctx)
+		err := w.runner.Run(w.ctx)
 		w.mu.Lock()
 		w.err = err
 		w.mu.Unlock()

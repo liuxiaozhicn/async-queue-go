@@ -73,7 +73,7 @@ func (d *RedisDriver) Pop(ctx context.Context) (string, *core.Message, error) {
 	}
 	score := fmt.Sprintf("%d", d.clock.Now().Add(d.handleTimeout).Unix())
 	res, err := popScript.Run(ctx, d.client, []string{d.keys.Waiting, d.keys.Reserved}, score).Result()
-	if err == redis.Nil || res == nil {
+	if errors.Is(err, redis.Nil) || res == nil {
 		// Queue is empty, sleep to avoid busy-loop then return
 		select {
 		case <-ctx.Done():

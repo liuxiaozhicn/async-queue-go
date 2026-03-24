@@ -55,12 +55,14 @@ func (e *ConsumerRunError) Error() string {
 }
 
 type Consumer struct {
-	driver          Driver
-	handler         Handler
-	concurrentLimit int
-	maxMessages     int
-	handleTimeout   int
-	hooks           ConsumerHooks
+	driver              Driver
+	handler             Handler
+	concurrentLimit     int
+	maxMessages         int
+	handleTimeout       int
+	handleTimeoutAction string
+
+	hooks ConsumerHooks
 
 	name string
 
@@ -133,14 +135,17 @@ func (c *Consumer) Run(ctx context.Context) error {
 		}
 		count++
 		atomic.AddInt64(&c.processed, 1)
-
+		log.Printf("[Consumer:%s] RECV | payload=%s attempts=%d/%d", c.name, message.Payload, message.Attempts, message.MaxAttempts)
 		sem <- struct{}{}
 		wg.Add(1)
 		go func(data string, msg *core.Message) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			if err := c.handleOne(ctx, data, msg); err != nil {
+			err := c.handleOne(ctx, data, msg)
+			if err != nil {
 				c.errCount(err)
+			} else {
+				log.Printf("[Consumer:%s] DONE｜ payload=%s attempts=%d/%d", c.name, message.Payload, message.Attempts, message.MaxAttempts)
 			}
 		}(data, message)
 	}
@@ -181,19 +186,20 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 			c.handleError(context.Background(), data, message)
 		}
 	}()
-
-	handleCtx, cancel := context.WithTimeout(ctx, time.Duration(c.handleTimeout)*time.Second)
-	defer cancel()
-	result, err := c.handler.Handle(handleCtx, message)
 	// The handler has finished; now we must commit the message disposition
 	// (ack/retry/fail/requeue). This context is detached from cancellation
 	// to guarantee delivery semantics — a completed handler whose result
 	// is not committed leads to duplicate processing.
 	atomicCtx := context.WithoutCancel(ctx)
+	handleTimeoutCtx, cancel := context.WithTimeout(context.Background(), time.Duration(c.handleTimeout)*time.Second)
+	defer cancel()
+
+	result, err := c.handler.Handle(handleTimeoutCtx, message)
 	if err != nil {
-		log.Printf("[Consumer] handler error: payload=%s attempts=%d/%d error=%v", message.Payload, message.Attempts, message.MaxAttempts, err)
+		log.Printf("[Consumer:%s] FAIL payload=%s result=%s attempts=%d/%d error=%v", c.name, message.Payload, "error", message.Attempts, message.MaxAttempts, err)
 		return c.handleError(atomicCtx, data, message)
 	}
+
 	switch result {
 	case core.REQUEUE:
 		if err := c.driver.Remove(atomicCtx, data); err != nil {
@@ -203,6 +209,8 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 			return err
 		}
 		atomic.AddInt64(&c.requeued, 1)
+		log.Printf("[Consumer:%s] REQUEUE | payload=%s attempts=%d/%d nextAttempt=%d",
+			c.name, message.Payload, message.Attempts, message.MaxAttempts, message.Attempts+1)
 		if c.hooks.OnRequeue != nil {
 			c.hooks.OnRequeue(atomicCtx, message)
 		}
@@ -217,6 +225,8 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 				return err
 			}
 			atomic.AddInt64(&c.retried, 1)
+			log.Printf("[Consumer:%s] RETRY | payload=%s attempts=%d/%d nextAttempt=%d",
+				c.name, message.Payload, message.Attempts, message.MaxAttempts, message.Attempts+1)
 			if c.hooks.OnRetry != nil {
 				c.hooks.OnRetry(atomicCtx, message)
 			}
@@ -226,6 +236,8 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 				return err
 			}
 			atomic.AddInt64(&c.failed, 1)
+			log.Printf("[Consumer:%s] EXHAUSTED | payload=%s attempts=%d/%d moveTo=failed",
+				c.name, message.Payload, message.Attempts, message.MaxAttempts)
 			if c.hooks.OnFail != nil {
 				c.hooks.OnFail(atomicCtx, message)
 			}
@@ -237,6 +249,8 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 			return err
 		}
 		atomic.AddInt64(&c.dropped, 1)
+		log.Printf("[Consumer:%s] DROP | payload=%s attempts=%d/%d",
+			c.name, message.Payload, message.Attempts, message.MaxAttempts)
 		if c.hooks.OnDrop != nil {
 			c.hooks.OnDrop(atomicCtx, message)
 		}
@@ -249,8 +263,7 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 	}
 }
 
-// handleError processes a handler that returned an error: retry if attempts remain, otherwise fail.
-// Mirrors PHP: attempts() ? (remove + retry) : fail
+// handleError processes a handler that returned an error: retry if attempts to remain, otherwise fail.
 func (c *Consumer) handleError(ctx context.Context, data string, message *core.Message) error {
 	if message.AttemptsAllowed() {
 		if err := c.driver.Remove(ctx, data); err != nil {
@@ -260,6 +273,8 @@ func (c *Consumer) handleError(ctx context.Context, data string, message *core.M
 			return err
 		}
 		atomic.AddInt64(&c.retried, 1)
+		log.Printf("[Consumer:%s:handleError]  RETRY | payload=%s attempts=%d/%d nextAttempt=%d reason=error",
+			c.name, message.Payload, message.Attempts, message.MaxAttempts, message.Attempts+1)
 		if c.hooks.OnRetry != nil {
 			c.hooks.OnRetry(ctx, message)
 		}
@@ -270,6 +285,8 @@ func (c *Consumer) handleError(ctx context.Context, data string, message *core.M
 		return err
 	}
 	atomic.AddInt64(&c.failed, 1)
+	log.Printf("[Consumer:%s:handleError]  EXHAUSTED | payload=%s attempts=%d/%d moveTo=failed reason=error",
+		c.name, message.Payload, message.Attempts, message.MaxAttempts)
 	if c.hooks.OnFail != nil {
 		c.hooks.OnFail(ctx, message)
 	}
@@ -283,6 +300,8 @@ func (c *Consumer) ackAndHook(ctx context.Context, data string, message *core.Me
 		return err
 	}
 	atomic.AddInt64(&c.acked, 1)
+	log.Printf("[Consumer:%s] ACK | payload=%s attempts=%d/%d",
+		c.name, message.Payload, message.Attempts, message.MaxAttempts)
 	if c.hooks.OnAck != nil {
 		c.hooks.OnAck(ctx, message)
 	}
