@@ -2,7 +2,7 @@
   "queues": {
     "order": {
       "channel": "queue:order",
-      "timeout_seconds": 1,
+      "pop_timeout": 1,
       "handle_timeout": 600,
       "retry_seconds": [5, 10, 30],
       "max_attempts": 3,

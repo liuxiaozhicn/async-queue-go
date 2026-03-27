@@ -31,7 +31,7 @@ type Queue struct {
 }
 
 // NewAsyncQueue creates a new async queue with external Redis client
-func NewAsyncQueue(client redis.UniversalClient, channel string, timeoutSeconds int, handleTimeoutSeconds int, retrySeconds []int, maxAttempts int, name string) (*Queue, error) {
+func NewAsyncQueue(client redis.UniversalClient, channel string, popTimeout int, handleTimeout int, retrySeconds []int, maxAttempts int, name string) (*Queue, error) {
 	if client == nil {
 		return nil, errors.New("redis client cannot be nil")
 	}
@@ -41,8 +41,8 @@ func NewAsyncQueue(client redis.UniversalClient, channel string, timeoutSeconds 
 		return nil, fmt.Errorf("redis ping failed: %w", err)
 	}
 
-	driver := queue.NewRedisDriver(client, channel, timeoutSeconds, handleTimeoutSeconds, retrySeconds)
-	return &Queue{client: client, driver: driver, handleTimeoutSeconds: handleTimeoutSeconds, retrySeconds: retrySeconds, maxAttempts: maxAttempts, name: name}, nil
+	driver := queue.NewRedisDriver(client, channel, popTimeout, handleTimeout, retrySeconds)
+	return &Queue{client: client, driver: driver, handleTimeoutSeconds: handleTimeout, retrySeconds: retrySeconds, maxAttempts: maxAttempts, name: name}, nil
 }
 
 // Close releases queue-local resources.

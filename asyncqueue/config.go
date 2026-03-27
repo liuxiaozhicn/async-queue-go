@@ -3,45 +3,54 @@ package asyncqueue
 import (
 	"encoding/json"
 	"fmt"
+	"gopkg.in/yaml.v3"
 	"os"
+	"path/filepath"
+	"strings"
 )
 
-// QueueConfig defines the configuration for a single queue.
 type QueueConfig struct {
-	Name            string `json:"name"`
-	Channel         string `json:"channel"`
-	TimeoutSeconds  int    `json:"timeout_seconds"`
-	HandleTimeout   int    `json:"handle_timeout"`
-	RetrySeconds    []int  `json:"retry_seconds"`
-	MaxAttempts     int    `json:"max_attempts"` // Maximum retry attempts for jobs in this queue
-	Processes       int    `json:"processes"`
-	Concurrent      int    `json:"concurrent"`
-	MaxMessages     int    `json:"max_messages"`
-	ShutdownTimeout int    `json:"shutdown_timeout"`
-	Enabled         bool   `json:"enabled"`
-	AutoRestart     bool   `json:"auto_restart"` // Automatically restart worker after reaching max_messages
+	Name            string `json:"name"             yaml:"name"`
+	Channel         string `json:"channel"          yaml:"channel"`
+	Enabled         bool   `json:"enabled"          yaml:"enabled"`
+	PopTimeout      int    `json:"pop_timeout"      yaml:"pop_timeout"`
+	HandleTimeout   int    `json:"handle_timeout"   yaml:"handle_timeout"`
+	RetrySeconds    []int  `json:"retry_seconds"    yaml:"retry_seconds"`
+	MaxAttempts     int    `json:"max_attempts"     yaml:"max_attempts"`
+	Processes       int    `json:"processes"        yaml:"processes"`
+	Concurrent      int    `json:"concurrent"       yaml:"concurrent"`
+	MaxMessages     int    `json:"max_messages"     yaml:"max_messages"`
+	AutoRestart     bool   `json:"auto_restart"     yaml:"auto_restart"`
+	ShutdownTimeout int    `json:"shutdown_timeout" yaml:"shutdown_timeout"`
 }
 
-// Config defines the multi-queue application configuration.
 type Config struct {
-	Queues map[string]QueueConfig `json:"queues"`
+	Queues map[string]QueueConfig `json:"queues" yaml:"queues"`
 }
 
 // LoadConfig loads configuration from a JSON file.
-func LoadConfig(filepath string) (*Config, error) {
-	data, err := os.ReadFile(filepath)
+func LoadConfig(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config file: %w", err)
 	}
 
 	var cfg Config
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	switch ext := strings.ToLower(filepath.Ext(path)); ext {
+	case ".json":
+		err = json.Unmarshal(data, &cfg)
+	case ".yaml", ".yml":
+		err = yaml.Unmarshal(data, &cfg)
+	default:
+		return nil, fmt.Errorf("unsupported config format: %s", ext)
+	}
+	if err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 
 	for name, queueCfg := range cfg.Queues {
-		if queueCfg.TimeoutSeconds <= 0 {
-			queueCfg.TimeoutSeconds = 2
+		if queueCfg.PopTimeout <= 0 {
+			queueCfg.PopTimeout = 1
 		}
 		if queueCfg.HandleTimeout <= 0 {
 			queueCfg.HandleTimeout = 10

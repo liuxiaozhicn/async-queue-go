@@ -92,8 +92,8 @@ func TestLoadConfig(t *testing.T) {
 		if qcfg.Name != "test" {
 			t.Errorf("expected default name test, got %s", qcfg.Name)
 		}
-		if qcfg.TimeoutSeconds != 2 {
-			t.Errorf("expected default timeout_seconds 2, got %d", qcfg.TimeoutSeconds)
+		if qcfg.PopTimeout != 2 {
+			t.Errorf("expected default timeout_seconds 2, got %d", qcfg.PopTimeout)
 		}
 		if qcfg.HandleTimeout != 10 {
 			t.Errorf("expected default handle_timeout 10, got %d", qcfg.HandleTimeout)

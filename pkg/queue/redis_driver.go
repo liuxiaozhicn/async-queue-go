@@ -14,22 +14,22 @@ import (
 type RedisDriver struct {
 	client        redis.UniversalClient
 	keys          Keys
-	timeout       time.Duration
+	PopTimeout    time.Duration
 	handleTimeout time.Duration
 	retrySeconds  []int
 	clock         clock.Clock
 }
 
-func NewRedisDriver(client redis.UniversalClient, channel string, timeoutSeconds int, handleTimeoutSeconds int, retrySeconds []int) *RedisDriver {
-	return NewRedisDriverWithClock(client, channel, timeoutSeconds, handleTimeoutSeconds, retrySeconds, clock.RealClock{})
+func NewRedisDriver(client redis.UniversalClient, channel string, popTimeout int, handleTimeout int, retrySeconds []int) *RedisDriver {
+	return NewRedisDriverWithClock(client, channel, popTimeout, handleTimeout, retrySeconds, clock.RealClock{})
 }
 
-func NewRedisDriverWithClock(client redis.UniversalClient, channel string, timeoutSeconds int, handleTimeoutSeconds int, retrySeconds []int, c clock.Clock) *RedisDriver {
-	if timeoutSeconds <= 0 {
-		timeoutSeconds = 2
+func NewRedisDriverWithClock(client redis.UniversalClient, channel string, popTimeout int, handleTimeout int, retrySeconds []int, c clock.Clock) *RedisDriver {
+	if popTimeout <= 0 {
+		popTimeout = 1
 	}
-	if handleTimeoutSeconds <= 0 {
-		handleTimeoutSeconds = 10
+	if handleTimeout <= 0 {
+		handleTimeout = 10
 	}
 	if c == nil {
 		c = clock.RealClock{}
@@ -37,8 +37,8 @@ func NewRedisDriverWithClock(client redis.UniversalClient, channel string, timeo
 	return &RedisDriver{
 		client:        client,
 		keys:          NewKeys(channel),
-		timeout:       time.Duration(timeoutSeconds) * time.Second,
-		handleTimeout: time.Duration(handleTimeoutSeconds) * time.Second,
+		PopTimeout:    time.Duration(popTimeout) * time.Second,
+		handleTimeout: time.Duration(handleTimeout) * time.Second,
 		retrySeconds:  retrySeconds,
 		clock:         c,
 	}
@@ -78,7 +78,7 @@ func (d *RedisDriver) Pop(ctx context.Context) (string, *core.Message, error) {
 		select {
 		case <-ctx.Done():
 			return "", nil, ctx.Err()
-		case <-time.After(d.timeout):
+		case <-time.After(d.PopTimeout):
 			return "", nil, nil
 		}
 	}

@@ -125,7 +125,7 @@ func (m *Manager) StartWorker() error {
 		var err error
 
 		// Use external Redis client
-		queue, err = NewAsyncQueue(m.redisClient, queueCfg.Channel, queueCfg.TimeoutSeconds, queueCfg.HandleTimeout, queueCfg.RetrySeconds, queueCfg.MaxAttempts, name)
+		queue, err = NewAsyncQueue(m.redisClient, queueCfg.Channel, queueCfg.PopTimeout, queueCfg.HandleTimeout, queueCfg.RetrySeconds, queueCfg.MaxAttempts, name)
 		if err != nil {
 			m.rollbackStartLocked()
 			return fmt.Errorf("[Manager] create queue %s: %w", name, err)

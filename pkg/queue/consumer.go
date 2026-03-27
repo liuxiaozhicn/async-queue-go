@@ -122,13 +122,16 @@ func (c *Consumer) Run(ctx context.Context) error {
 
 		data, message, err := c.driver.Pop(ctx)
 		if err != nil {
-			c.recordErr(err)
 			if ctx.Err() != nil {
+				log.Printf("[Consumer:%s] context cancelled during Pop, waiting for running jobs to finish...", c.name)
 				wg.Wait()
+				log.Printf("[Consumer:%s] all running jobs done, shutdown complete", c.name)
 				return c.runErr()
 			}
+			log.Printf("[Consumer:%s] Pop error: %v", c.name, err)
+			c.recordErr(err)
 			wg.Wait()
-			return err
+			return c.runErr()
 		}
 		if data == "" || message == nil {
 			continue
@@ -143,7 +146,8 @@ func (c *Consumer) Run(ctx context.Context) error {
 			defer func() { <-sem }()
 			err := c.handleOne(ctx, data, msg)
 			if err != nil {
-				c.errCount(err)
+				log.Printf("[Consumer:%s] ERROR | payload=%s attempts=%d/%d error=%v", c.name, msg.Payload, msg.Attempts, msg.MaxAttempts, err)
+				c.incrErrors(err)
 			} else {
 				log.Printf("[Consumer:%s] DONE｜ payload=%s attempts=%d/%d", c.name, message.Payload, message.Attempts, message.MaxAttempts)
 			}
@@ -154,12 +158,11 @@ func (c *Consumer) Run(ctx context.Context) error {
 	return c.runErr()
 }
 
-func (c *Consumer) errCount(err error) {
+func (c *Consumer) incrErrors(err error) {
 	if err == nil {
 		return
 	}
 	atomic.AddInt64(&c.errors, 1)
-
 }
 
 func (c *Consumer) recordErr(err error) {
@@ -183,7 +186,11 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("[Consumer] handler panic: payload=%s attempts=%d/%d panic=%v", message.Payload, message.Attempts, message.MaxAttempts, r)
-			c.handleError(context.Background(), data, message)
+			err := c.handleError(context.Background(), data, message)
+			if err != nil {
+				log.Printf("[Consumer:%s] handleError err =%#v | payload=%s attempts=%d/%d nextAttempt=%d",
+					c.name, err, message.Payload, message.Attempts, message.MaxAttempts, message.Attempts+1)
+			}
 		}
 	}()
 	// The handler has finished; now we must commit the message disposition
@@ -236,7 +243,7 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 				return err
 			}
 			atomic.AddInt64(&c.failed, 1)
-			log.Printf("[Consumer:%s] EXHAUSTED | payload=%s attempts=%d/%d moveTo=failed",
+			log.Printf("[Consumer:%s] RETRY | payload=%s attempts=%d/%d moveTo=failed",
 				c.name, message.Payload, message.Attempts, message.MaxAttempts)
 			if c.hooks.OnFail != nil {
 				c.hooks.OnFail(atomicCtx, message)
@@ -273,7 +280,8 @@ func (c *Consumer) handleError(ctx context.Context, data string, message *core.M
 			return err
 		}
 		atomic.AddInt64(&c.retried, 1)
-		log.Printf("[Consumer:%s:handleError]  RETRY | payload=%s attempts=%d/%d nextAttempt=%d reason=error",
+		// RETRY 日志：把 nextAttempt 改成 scheduledAttempt，强调"下一次调度的是第几次"
+		log.Printf("[Consumer:%s:handleError] RETRY | payload=%s attempt=%d/%d scheduledAttempt=%d",
 			c.name, message.Payload, message.Attempts, message.MaxAttempts, message.Attempts+1)
 		if c.hooks.OnRetry != nil {
 			c.hooks.OnRetry(ctx, message)
@@ -285,7 +293,7 @@ func (c *Consumer) handleError(ctx context.Context, data string, message *core.M
 		return err
 	}
 	atomic.AddInt64(&c.failed, 1)
-	log.Printf("[Consumer:%s:handleError]  EXHAUSTED | payload=%s attempts=%d/%d moveTo=failed reason=error",
+	log.Printf("[Consumer:%s：handleError] FAILED | payload=%.100s attempts=%d/%d",
 		c.name, message.Payload, message.Attempts, message.MaxAttempts)
 	if c.hooks.OnFail != nil {
 		c.hooks.OnFail(ctx, message)

@@ -60,14 +60,14 @@ func TestWorkerConsumesMessage(t *testing.T) {
 	cfg := &Config{
 		Queues: map[string]QueueConfig{
 			"test": {
-				Channel:        "{kit-worker}",
-				Enabled:        true,
-				Processes:      1,
-				Concurrent:     1,
-				MaxMessages:    1,
-				TimeoutSeconds: 1,
-				HandleTimeout:  1,
-				RetrySeconds:   []int{1},
+				Channel:       "{kit-worker}",
+				Enabled:       true,
+				Processes:     1,
+				Concurrent:    1,
+				MaxMessages:   1,
+				PopTimeout:    1,
+				HandleTimeout: 1,
+				RetrySeconds:  []int{1},
 			},
 		},
 	}
@@ -174,14 +174,14 @@ func TestWorkerConsumesJobMessage(t *testing.T) {
 	cfg := &Config{
 		Queues: map[string]QueueConfig{
 			"test": {
-				Channel:        "{kit-worker-job}",
-				Enabled:        true,
-				Processes:      1,
-				Concurrent:     1,
-				MaxMessages:    1,
-				TimeoutSeconds: 1,
-				HandleTimeout:  1,
-				RetrySeconds:   []int{1},
+				Channel:       "{kit-worker-job}",
+				Enabled:       true,
+				Processes:     1,
+				Concurrent:    1,
+				MaxMessages:   1,
+				PopTimeout:    1,
+				HandleTimeout: 1,
+				RetrySeconds:  []int{1},
 			},
 		},
 	}
