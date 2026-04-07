@@ -31,9 +31,9 @@ type OrderJobHandler struct{}
 func (h *OrderJobHandler) Handle(ctx context.Context, m *core.Message) (core.Result, error) {
 	job := &OrderJob{}
 	_ = json.Unmarshal(m.Payload, job)
-	duration := time.Duration(60+rand.Intn(61)) * time.Second
+	duration := time.Duration(30+rand.Intn(31)) * time.Second
 	select {
-	case <-time.After(duration * time.Second):
+	case <-time.After(duration):
 		return core.ACK, nil
 	case <-ctx.Done():
 		return core.RETRY, ctx.Err()
@@ -97,7 +97,7 @@ func main() {
 			log.Printf("[Push] failed to get queue: %v", err)
 		}
 
-		orderID := 8000
+		orderID := 1000
 		for {
 			select {
 			case <-ctx.Done():
