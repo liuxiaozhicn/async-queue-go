@@ -88,7 +88,7 @@ func run(ctx context.Context, args []string) error {
 	handler := func(ctx context.Context, m *core.Message) (core.Result, error) {
 		return core.ACK, nil
 	}
-	consumer := queue.NewConsumer(driver, queue.HandlerFunc(handler), opts.concurrent, opts.maxMessages, "", opts.handleTimeout, nil)
+	consumer := queue.NewConsumer(driver, queue.HandlerFunc(handler), opts.concurrent, opts.maxMessages, "", 1, opts.handleTimeout, nil)
 	w := worker.NewWorker(consumer)
 
 	// Start worker

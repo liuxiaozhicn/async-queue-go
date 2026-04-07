@@ -79,11 +79,11 @@ func (q *Queue) PushMessage(ctx context.Context, m *core.Message, delaySeconds i
 	}
 	err := q.driver.Push(ctx, m, delaySeconds)
 	if err != nil {
-		q.logger.Warn(ctx, "[Queue:%s] PUSH ｜error payload:%s delay:%ds error:%v", q.name, m.Payload, delaySeconds, err)
+		q.logger.Warn(ctx, "[Producer:q:%s] PUSH|error payload:%s delay:%ds error:%v", q.name, m.Payload, delaySeconds, err)
 		return err
 	}
 
-	q.logger.Info(ctx, "[Queue:%s] PUSH｜payload:%s delay:%ds maxAttempts:%d", q.name, m.Payload, delaySeconds, m.MaxAttempts)
+	q.logger.Info(ctx, "[Producer:q:%s] PUSH|payload:%s delay:%ds maxAttempts:%d", q.name, m.Payload, delaySeconds, m.MaxAttempts)
 	return nil
 }
 

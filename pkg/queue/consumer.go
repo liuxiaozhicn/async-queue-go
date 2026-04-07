@@ -131,7 +131,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 			if ctx.Err() != nil {
 				c.logger.Info(ctx, "[Consumer:%s-%d] context cancelled, waiting for running jobs to finish...", c.name, c.processID)
 				wg.Wait()
-				c.logger.Info(ctx, "[Consumer:%s-%d] all running jobs finish, shutdown complete", c.name, c.processID)
+				c.logger.Info(ctx, "[Consumer:%s-%d] running jobs done, consumer shutdown complete ", c.name, c.processID)
 				return c.runErr()
 			}
 			c.logger.Error(ctx, "[Consumer:%s-%d] Pop error: %v", c.name, c.processID, err)
@@ -144,7 +144,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 		}
 		count++
 		atomic.AddInt64(&c.processed, 1)
-		c.logger.Info(ctx, "[Consumer:%s-%d] REC  | payload=%s attempts=%d/%d", c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts)
+		c.logger.Info(ctx, "[Consumer:%s-%d] REC |payload:%s attempts:%d/%d", c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts)
 		sem <- struct{}{}
 		wg.Add(1)
 		go func(data string, msg *core.Message) {
@@ -152,10 +152,10 @@ func (c *Consumer) Run(ctx context.Context) error {
 			defer func() { <-sem }()
 			err := c.handleOne(ctx, data, msg)
 			if err != nil {
-				c.logger.Error(ctx, "[Consumer:%s-%d] ERROR | payload=%s attempts=%d/%d error=%v", c.name, c.processID, msg.Payload, msg.Attempts, msg.MaxAttempts, err)
+				c.logger.Error(ctx, "[Consumer:%s-%d:handleOneError]payload:%s attempts:%d/%d error:%v", c.name, c.processID, msg.Payload, msg.Attempts, msg.MaxAttempts, err)
 				c.incrErrors(err)
 			} else {
-				c.logger.Info(ctx, "[Consumer:%s-%d] FINISH｜ payload=%s attempts=%d/%d", c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts)
+				c.logger.Info(ctx, "[Consumer:%s-%d] DONE|payload:%s attempts:%d/%d", c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts)
 			}
 		}(data, message)
 	}
@@ -191,25 +191,27 @@ func (c *Consumer) runErr() error {
 func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Message) error {
 	defer func() {
 		if r := recover(); r != nil {
-			c.logger.Error(ctx, "[Consumer:%s-%d] handler panic: payload=%s attempts=%d/%d panic=%v", c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts, r)
+			c.logger.Error(ctx, "[Consumer:%s-%d:handleOne] panic: payload:%s attempts:%d/%d panic:%v", c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts, r)
 			err := c.handleError(context.Background(), data, message)
 			if err != nil {
-				c.logger.Error(ctx, "[Consumer:%s-%d] handleError err =%#v | payload=%s attempts=%d/%d nextAttempt=%d",
+				c.logger.Error(ctx, "[Consumer:%s-%d:handleOne] error: err :%#v | payload:%s attempts:%d/%d nextAttempt:%d",
 					c.name, c.processID, err, message.Payload, message.Attempts, message.MaxAttempts, message.Attempts+1)
 			}
 		}
 	}()
+
+	c.logger.Info(ctx, "[Consumer:%s-%d] RUN |payload:%s attempts:%d/%d", c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts)
 	// The handler has finished; now we must commit the message disposition
 	// (ack/retry/fail/requeue). This context is detached from cancellation
 	// to guarantee delivery semantics — a completed handler whose result
 	// is not committed leads to duplicate processing.
-	atomicCtx := context.WithoutCancel(context.Background())
-	handleTimeoutCtx, cancel := context.WithTimeout(context.Background(), time.Duration(c.handleTimeout)*time.Second)
+	atomicCtx := context.WithoutCancel(ctx)
+	handleTimeoutCtx, cancel := context.WithTimeout(atomicCtx, time.Duration(c.handleTimeout)*time.Second)
 	defer cancel()
 
 	result, err := c.handler.Handle(handleTimeoutCtx, message)
 	if err != nil {
-		c.logger.Error(ctx, "[Consumer:%s-%d] FAIL payload=%s result=%s attempts=%d/%d error=%v", c.name, c.processID, message.Payload, "error", message.Attempts, message.MaxAttempts, err)
+		c.logger.Error(ctx, "[Consumer:%s-%d:handleOne] FAIL payload:%s result:%s attempts:%d/%d error:%v", c.name, c.processID, message.Payload, "error", message.Attempts, message.MaxAttempts, err)
 		return c.handleError(atomicCtx, data, message)
 	}
 
@@ -222,7 +224,7 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 			return err
 		}
 		atomic.AddInt64(&c.requeued, 1)
-		c.logger.Info(ctx, "[Consumer:%s-%d] REQUEUE | payload=%s attempts=%d/%d nextAttempt=%d",
+		c.logger.Info(ctx, "[Consumer:%s-%d] REQ | payload:%s attempts:%d/%d nextAttempt:%d",
 			c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts, message.Attempts+1)
 		if c.hooks.OnRequeue != nil {
 			c.hooks.OnRequeue(atomicCtx, message)
@@ -238,7 +240,7 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 				return err
 			}
 			atomic.AddInt64(&c.retried, 1)
-			c.logger.Info(ctx, "[Consumer:%s-%d] RETRY | payload=%s attempts=%d/%d nextAttempt=%d",
+			c.logger.Info(ctx, "[Consumer:%s-%d] RETRY | payload:%s attempts:%d/%d nextAttempt:%d",
 				c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts, message.Attempts+1)
 			if c.hooks.OnRetry != nil {
 				c.hooks.OnRetry(atomicCtx, message)
@@ -249,7 +251,7 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 				return err
 			}
 			atomic.AddInt64(&c.failed, 1)
-			c.logger.Info(ctx, "[Consumer:%s-%d] RETRY | payload=%s attempts=%d/%d moveTo=failed",
+			c.logger.Info(ctx, "[Consumer:%s-%d] RETRY | payload:%s attempts:%d/%d moveTo=failed",
 				c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts)
 			if c.hooks.OnFail != nil {
 				c.hooks.OnFail(atomicCtx, message)
@@ -262,7 +264,7 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 			return err
 		}
 		atomic.AddInt64(&c.dropped, 1)
-		c.logger.Info(ctx, "[Consumer:%s-%d] DROP | payload=%s attempts=%d/%d",
+		c.logger.Info(ctx, "[Consumer:%s-%d] DROP | payload:%s attempts:%d/%d",
 			c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts)
 		if c.hooks.OnDrop != nil {
 			c.hooks.OnDrop(atomicCtx, message)
@@ -287,7 +289,7 @@ func (c *Consumer) handleError(ctx context.Context, data string, message *core.M
 		}
 		atomic.AddInt64(&c.retried, 1)
 		// RETRY 日志：把 nextAttempt 改成 scheduledAttempt，强调"下一次调度的是第几次"
-		c.logger.Info(ctx, "[Consumer:%s-%d:handleError] RETRY | payload=%s attempt=%d/%d scheduledAttempt=%d",
+		c.logger.Info(ctx, "[Consumer:%s-%d:handleError] RETRY | payload:%s attempt:%d/%d scheduledAttempt:%d",
 			c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts, message.Attempts+1)
 		if c.hooks.OnRetry != nil {
 			c.hooks.OnRetry(ctx, message)
@@ -299,7 +301,7 @@ func (c *Consumer) handleError(ctx context.Context, data string, message *core.M
 		return err
 	}
 	atomic.AddInt64(&c.failed, 1)
-	c.logger.Info(ctx, "[Consumer:%s-%d：handleError] FAILED | payload=%.100s attempts=%d/%d",
+	c.logger.Info(ctx, "[Consumer:%s-%d：handleError] FAILED | payload:%.100s attempts:%d/%d",
 		c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts)
 	if c.hooks.OnFail != nil {
 		c.hooks.OnFail(ctx, message)
@@ -314,7 +316,7 @@ func (c *Consumer) ackAndHook(ctx context.Context, data string, message *core.Me
 		return err
 	}
 	atomic.AddInt64(&c.acked, 1)
-	c.logger.Info(ctx, "[Consumer:%s-%d] ACK | payload=%s attempts=%d/%d",
+	c.logger.Info(ctx, "[Consumer:%s-%d] ACK | payload:%s attempts:%d/%d",
 		c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts)
 	if c.hooks.OnAck != nil {
 		c.hooks.OnAck(ctx, message)
