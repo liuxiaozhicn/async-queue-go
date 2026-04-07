@@ -3,8 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"flag"
+	"fmt"
 	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
+	"github.com/redis/go-redis/v9"
 	"log"
 	"os/signal"
 	"sync"
@@ -12,16 +13,23 @@ import (
 	"time"
 
 	"github.com/liuxiaozhicn/async-queue-go/asyncqueue"
-	"github.com/redis/go-redis/v9"
 	"math/rand"
 )
 
 // OrderJob handles order creation.
 type OrderJob struct {
-	OrderID     int       `json:"order_id"`
+	OrderID     string    `json:"order_id"`
 	UserID      int       `json:"user_id"`
 	TotalAmount float64   `json:"total_amount"`
 	CreatedAt   time.Time `json:"created_at"`
+}
+
+func generateOrderID() string {
+	b := make([]byte, 4)
+	_, _ = rand.Read(b)
+	randPart := fmt.Sprintf("%08x", b) // 8位随机hex
+	datePart := time.Now().Format("20060102")
+	return fmt.Sprintf("ORD-%s-%s", datePart, randPart)
 }
 
 func (j *OrderJob) GetType() string { return "order" }
@@ -43,19 +51,35 @@ func (h *OrderJobHandler) Handle(ctx context.Context, m *core.Message) (core.Res
 }
 
 func main() {
-	configFile := flag.String("config", "config.json", "config file path")
-	flag.Parse()
-
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
-	s, err := asyncqueue.LoadServer(*configFile, client)
-	if err != nil {
-		log.Fatalf("[Main] failed to load server: %v", err)
+	queueCfg := &asyncqueue.Config{
+		Queues: map[string]asyncqueue.QueueConfig{
+			"order": {
+				Channel:         "queue:order",
+				Enabled:         true,
+				PopTimeout:      1,
+				HandleTimeout:   180,
+				ShutdownTimeout: 240,
+				Processes:       2,
+				Concurrent:      10,
+				MaxAttempts:     3,
+				RetrySeconds:    []int{5, 10, 30},
+				AutoRestart:     false,
+				MaxMessages:     10,
+			},
+		},
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	s, err := asyncqueue.NewServer(queueCfg, client)
+
+	if err != nil {
+		log.Fatalf("[Main] failed to load server: %v", err)
+	}
 
 	var wg sync.WaitGroup
 
@@ -95,20 +119,20 @@ func main() {
 
 		queue, _ := s.Queue("order")
 
-		orderID := 1000
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				orderID++
+				orderID := generateOrderID()
 				job := &OrderJob{
+
 					OrderID:     orderID,
-					UserID:      orderID % 100,
-					TotalAmount: float64(orderID%500 + 50),
+					UserID:      rand.Intn(1000) + 1,
+					TotalAmount: float64(rand.Intn(95000)+1000) / 100.0,
 					CreatedAt:   time.Now(),
 				}
-				queue.PushJob(ctx, job, 0)
+				queue.PushJob(ctx, job, 30)
 			}
 		}
 	}()

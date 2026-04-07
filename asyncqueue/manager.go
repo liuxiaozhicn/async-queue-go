@@ -347,7 +347,7 @@ func (m *Manager) runWorkerWithAutoRestart(queueName string, processID int, w *i
 }
 
 const logo = `
- ___                                           ____                             
+    ___                                           ____                             
    /   |   _____   __  __   ____   _____         / __ \  __  __  ___   __  __  ___
   / /| |  / ___/  / / / /  / __ \ / ___/        / / / / / / / / / _ \ / / / / / _ \
  / ___ | (__  )  / /_/ /  / / / // /__         / /_/ / / /_/ / /  __// /_/ / /  __/
