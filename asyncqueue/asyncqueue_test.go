@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
+	"github.com/liuxiaozhicn/async-queue-go/pkg/logger"
 	"testing"
 
 	"github.com/liuxiaozhicn/async-queue-go/pkg/queue"
@@ -14,7 +15,7 @@ func TestQueuePushMessageAndInfo(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
-	q, err := NewAsyncQueue(client, "{kit-test}", 1, 1, []int{1, 2}, 3, "")
+	q, err := NewAsyncQueue(client, "{kit-test}", 1, 1, []int{1, 2}, 3, "", logger.Default)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +45,7 @@ func TestWorkerConsumesMessage(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
-	q, err := NewAsyncQueue(client, "{kit-worker}", 1, 1, []int{1}, 3, "")
+	q, err := NewAsyncQueue(client, "{kit-worker}", 1, 1, []int{1}, 3, "", logger.Default)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +77,7 @@ func TestWorkerConsumesMessage(t *testing.T) {
 		called++
 		return core.ACK, nil
 	}))
-	manager, err := NewManagerWithRedis(cfg, serveMux, client)
+	manager, err := NewManagerWithRedis(cfg, serveMux, client, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +96,7 @@ func TestQueuePushJobAndInfo(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
-	q, err := NewAsyncQueue(client, "kit-pushjob", 1, 1, []int{1, 2}, 3, "")
+	q, err := NewAsyncQueue(client, "kit-pushjob", 1, 1, []int{1, 2}, 3, "", logger.Default)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +137,7 @@ func TestQueuePushJobNilJob(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
-	q, err := NewAsyncQueue(client, "{kit-pushjob-nil}", 1, 1, []int{1}, 3, "")
+	q, err := NewAsyncQueue(client, "{kit-pushjob-nil}", 1, 1, []int{1}, 3, "", logger.Default)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +154,7 @@ func TestWorkerConsumesJobMessage(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
-	q, err := NewAsyncQueue(client, "{kit-worker-job}", 1, 1, []int{1}, 3, "")
+	q, err := NewAsyncQueue(client, "{kit-worker-job}", 1, 1, []int{1}, 3, "", logger.Default)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +191,7 @@ func TestWorkerConsumesJobMessage(t *testing.T) {
 		called++
 		return core.ACK, nil
 	}))
-	manager, err := NewManagerWithRedis(cfg, serveMux, client)
+	manager, err := NewManagerWithRedis(cfg, serveMux, client, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

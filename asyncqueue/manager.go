@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
+	"github.com/liuxiaozhicn/async-queue-go/pkg/logger"
 	iqueue "github.com/liuxiaozhicn/async-queue-go/pkg/queue"
 	iworker "github.com/liuxiaozhicn/async-queue-go/pkg/worker"
 	"github.com/redis/go-redis/v9"
@@ -20,6 +20,7 @@ type Manager struct {
 	queues      map[string]*Queue
 	workers     map[string][]*iworker.Worker
 	redisClient redis.UniversalClient // Optional external Redis client
+	logger      logger.Interface
 
 	mu     sync.RWMutex
 	ctx    context.Context
@@ -35,12 +36,15 @@ type Manager struct {
 }
 
 // NewManager creates a queue manager.
-func NewManager(config *Config, serveMux *ServeMux) (*Manager, error) {
+func NewManager(config *Config, serveMux *ServeMux, l logger.Interface) (*Manager, error) {
 	if config == nil {
 		return nil, errors.New("config is nil")
 	}
 	if serveMux == nil {
 		return nil, errors.New("serveMux is nil")
+	}
+	if l == nil {
+		l = logger.Default
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -49,13 +53,14 @@ func NewManager(config *Config, serveMux *ServeMux) (*Manager, error) {
 		serveMux: serveMux,
 		queues:   make(map[string]*Queue),
 		workers:  make(map[string][]*iworker.Worker),
+		logger:   l,
 		ctx:      ctx,
 		cancel:   cancel,
 	}, nil
 }
 
 // NewManagerWithRedis creates a queue manager with external Redis client.
-func NewManagerWithRedis(config *Config, serveMux *ServeMux, redisClient redis.UniversalClient) (*Manager, error) {
+func NewManagerWithRedis(config *Config, serveMux *ServeMux, redisClient redis.UniversalClient, l logger.Interface) (*Manager, error) {
 	if config == nil {
 		return nil, errors.New("config is nil")
 	}
@@ -65,6 +70,9 @@ func NewManagerWithRedis(config *Config, serveMux *ServeMux, redisClient redis.U
 	if redisClient == nil {
 		return nil, errors.New("redis client is nil")
 	}
+	if l == nil {
+		l = logger.Default
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Manager{
@@ -73,6 +81,7 @@ func NewManagerWithRedis(config *Config, serveMux *ServeMux, redisClient redis.U
 		queues:      make(map[string]*Queue),
 		workers:     make(map[string][]*iworker.Worker),
 		redisClient: redisClient,
+		logger:      l,
 		ctx:         ctx,
 		cancel:      cancel,
 	}, nil
@@ -125,7 +134,7 @@ func (m *Manager) StartWorker() error {
 		var err error
 
 		// Use external Redis client
-		queue, err = NewAsyncQueue(m.redisClient, queueCfg.Channel, queueCfg.PopTimeout, queueCfg.HandleTimeout, queueCfg.RetrySeconds, queueCfg.MaxAttempts, name)
+		queue, err = NewAsyncQueue(m.redisClient, queueCfg.Channel, queueCfg.PopTimeout, queueCfg.HandleTimeout, queueCfg.RetrySeconds, queueCfg.MaxAttempts, name, m.logger)
 		if err != nil {
 			m.rollbackStartLocked()
 			return fmt.Errorf("[Manager] create queue %s: %w", name, err)
@@ -134,7 +143,7 @@ func (m *Manager) StartWorker() error {
 
 		workers := make([]*iworker.Worker, 0, queueCfg.Processes)
 		for i := 0; i < queueCfg.Processes; i++ {
-			consumer := iqueue.NewConsumer(queue.driver, handler, queueCfg.Concurrent, queueCfg.MaxMessages, name, queueCfg.HandleTimeout)
+			consumer := iqueue.NewConsumer(queue.driver, handler, queueCfg.Concurrent, queueCfg.MaxMessages, name, i, queueCfg.HandleTimeout, m.logger)
 			workerInstance := iworker.NewWorker(consumer)
 
 			workers = append(workers, workerInstance)
@@ -163,6 +172,7 @@ func (m *Manager) StartWorker() error {
 	}
 
 	m.started = true
+	Banner(m.logger)
 	return nil
 }
 
@@ -222,6 +232,7 @@ func (m *Manager) Run(ctx context.Context, shutdownTimeout time.Duration) error 
 	case err := <-waitDone:
 		return err
 	case <-ctx.Done():
+		m.logger.Warn(ctx, "async-queue server shutting down...")
 		return m.Stop(shutdownTimeout)
 	}
 }
@@ -298,9 +309,9 @@ func (m *Manager) runWorkerWithAutoRestart(queueName string, processID int, w *i
 		}
 
 		if restartCount == 0 {
-			log.Printf("[Manager] runWorkerWithAutoRestart queue %s process %d started", queueName, processID)
+			m.logger.Info(m.ctx, "[Manager] runWorkerWithAutoRestart queue %s process %d started", queueName, processID)
 		} else {
-			log.Printf("[Manager] runWorkerWithAutoRestart queue %s process %d restarted (count=%d)", queueName, processID, restartCount)
+			m.logger.Info(m.ctx, "[Manager] runWorkerWithAutoRestart queue %s process %d restarted (count=%d)", queueName, processID, restartCount)
 		}
 
 		// Wait for worker to finish
@@ -323,14 +334,30 @@ func (m *Manager) runWorkerWithAutoRestart(queueName string, processID int, w *i
 		}
 
 		// Create a new worker instance for restart
-		consumer := iqueue.NewConsumer(q.driver, handler, cfg.Concurrent, cfg.MaxMessages, queueName, cfg.HandleTimeout)
+		consumer := iqueue.NewConsumer(q.driver, handler, cfg.Concurrent, cfg.MaxMessages, queueName, processID, cfg.HandleTimeout, m.logger)
 		w = iworker.NewWorker(consumer)
 
 		restartCount++
-		log.Printf("[Manager] runWorkerWithAutoRestart queue %s process %d reached max messages (%d), restarting...",
+		m.logger.Info(m.ctx, "[Manager] runWorkerWithAutoRestart queue %s process %d reached max messages (%d), restarting...",
 			queueName, processID, cfg.MaxMessages)
 
 		// Optional: add a small delay before restart to avoid tight loops
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+const logo = `
+ ___                                           ____                             
+   /   |   _____   __  __   ____   _____         / __ \  __  __  ___   __  __  ___
+  / /| |  / ___/  / / / /  / __ \ / ___/        / / / / / / / / / _ \ / / / / / _ \
+ / ___ | (__  )  / /_/ /  / / / // /__         / /_/ / / /_/ / /  __// /_/ / /  __/
+/_/  |_|/____/   \__, /  /_/ /_/ \___/         \___\_\ \__,_/  \___/ \__,_/  \___/ 
+                /____/                                                               
+
+`
+
+// Banner prints a startup banner to stdout and logs structured startup info.
+func Banner(l logger.Interface) {
+	fmt.Print(logo)
+	l.Info(context.Background(), "async-queue server started")
 }

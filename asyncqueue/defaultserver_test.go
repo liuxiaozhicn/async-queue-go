@@ -96,7 +96,7 @@ func TestSetDefaultWithWarn_Overwrite(t *testing.T) {
 	buf.Reset()
 
 	setDefaultWithWarn(s2) // second: global is s1 → should warn
-	if !strings.Contains(buf.String(), "warn") {
+	if !strings.Contains(strings.ToLower(buf.String()), "warn") {
 		t.Fatal("expected overwrite warning log when replacing non-nil default server")
 	}
 	if DefaultServer() != s2 {

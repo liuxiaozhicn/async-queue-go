@@ -3,9 +3,9 @@ package asyncqueue
 import (
 	"context"
 	"errors"
-	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
-	"log"
 	"sync/atomic"
+
+	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
 )
 
 var defaultServer atomic.Pointer[Server]
@@ -51,6 +51,6 @@ func PushMessage(ctx context.Context, queueName string, msg *core.Message, delay
 func setDefaultWithWarn(s *Server) {
 	old := defaultServer.Swap(s)
 	if old != nil {
-		log.Println("warn: overwriting existing default server")
+		s.logger.Warn(context.Background(), "overwriting existing default server")
 	}
 }

@@ -5,9 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
-
 	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
+	"github.com/liuxiaozhicn/async-queue-go/pkg/logger"
 	"github.com/liuxiaozhicn/async-queue-go/pkg/queue"
 	"github.com/redis/go-redis/v9"
 )
@@ -28,10 +27,11 @@ type Queue struct {
 	retrySeconds         []int
 	maxAttempts          int // Maximum retry attempts from configuration
 	name                 string
+	logger               logger.Interface
 }
 
 // NewAsyncQueue creates a new async queue with external Redis client
-func NewAsyncQueue(client redis.UniversalClient, channel string, popTimeout int, handleTimeout int, retrySeconds []int, maxAttempts int, name string) (*Queue, error) {
+func NewAsyncQueue(client redis.UniversalClient, channel string, popTimeout int, handleTimeout int, retrySeconds []int, maxAttempts int, name string, l logger.Interface) (*Queue, error) {
 	if client == nil {
 		return nil, errors.New("redis client cannot be nil")
 	}
@@ -42,7 +42,7 @@ func NewAsyncQueue(client redis.UniversalClient, channel string, popTimeout int,
 	}
 
 	driver := queue.NewRedisDriver(client, channel, popTimeout, handleTimeout, retrySeconds)
-	return &Queue{client: client, driver: driver, handleTimeoutSeconds: handleTimeout, retrySeconds: retrySeconds, maxAttempts: maxAttempts, name: name}, nil
+	return &Queue{client: client, driver: driver, handleTimeoutSeconds: handleTimeout, retrySeconds: retrySeconds, maxAttempts: maxAttempts, name: name, logger: l}, nil
 }
 
 // Close releases queue-local resources.
@@ -79,11 +79,11 @@ func (q *Queue) PushMessage(ctx context.Context, m *core.Message, delaySeconds i
 	}
 	err := q.driver.Push(ctx, m, delaySeconds)
 	if err != nil {
-		log.Printf("[Queue:%s] PUSH｜FAIL payload=%s delay=%ds error=%v", q.name, m.Payload, delaySeconds, err)
+		q.logger.Warn(ctx, "[Queue:%s] PUSH ｜error payload:%s delay:%ds error:%v", q.name, m.Payload, delaySeconds, err)
 		return err
 	}
 
-	log.Printf("[Queue:%s] PUSH｜payload=%s delay=%ds maxAttempts=%d", q.name, m.Payload, delaySeconds, m.MaxAttempts)
+	q.logger.Info(ctx, "[Queue:%s] PUSH｜payload:%s delay:%ds maxAttempts:%d", q.name, m.Payload, delaySeconds, m.MaxAttempts)
 	return nil
 }
 

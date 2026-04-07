@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
+	"github.com/liuxiaozhicn/async-queue-go/pkg/logger"
 )
 
 type fakeDriver struct {
@@ -130,7 +131,7 @@ func TestConsumerResultRouting(t *testing.T) {
 			handler := HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
 				return tc.result, tc.err
 			})
-			c := NewConsumer(d, handler, 1, 1, "")
+			c := NewConsumer(d, handler, 1, 1, "", 1, 2, logger.Default.LogMode(logger.Silent))
 			if err := c.Run(context.Background()); err != nil {
 				t.Fatal(err)
 			}
@@ -163,7 +164,7 @@ func TestConsumerMaxMessagesAndConcurrency(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 		atomic.AddInt32(&d.inFlight, -1)
 		return core.ACK, nil
-	}), 3, 7, "")
+	}), 3, 7, "", 1, 2, logger.Default.LogMode(logger.Silent))
 
 	if err := c.Run(context.Background()); err != nil {
 		t.Fatal(err)
@@ -187,7 +188,7 @@ func TestConsumerRunReturnsAggregatedErrors(t *testing.T) {
 
 	c := NewConsumer(d, HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
 		return core.ACK, nil
-	}), 2, 3, "")
+	}), 2, 3, "", 1, 2, logger.Default.LogMode(logger.Silent))
 
 	err := c.Run(context.Background())
 	if err == nil {
@@ -236,7 +237,7 @@ func TestConsumerHooksAndStats(t *testing.T) {
 		OnDrop: func(context.Context, *core.Message) {
 			dropN++
 		},
-	}, "")
+	}, "", 1, 2, logger.Default.LogMode(logger.Silent))
 
 	if err := c.Run(context.Background()); err != nil {
 		t.Fatal(err)
@@ -268,7 +269,7 @@ func TestConsumerShutdownDrainsInFlight(t *testing.T) {
 		started <- struct{}{}
 		<-release
 		return core.ACK, nil
-	}), 2, 2, "")
+	}), 2, 2, "", 1, 2, logger.Default.LogMode(logger.Silent))
 
 	done := make(chan error, 1)
 	go func() {

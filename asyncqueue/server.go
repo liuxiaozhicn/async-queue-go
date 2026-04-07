@@ -3,9 +3,9 @@ package asyncqueue
 import (
 	"context"
 	"errors"
-	"log"
 	"time"
 
+	"github.com/liuxiaozhicn/async-queue-go/pkg/logger"
 	"github.com/liuxiaozhicn/async-queue-go/pkg/queue"
 	"github.com/redis/go-redis/v9"
 )
@@ -19,6 +19,7 @@ type Server struct {
 	serveMux    *ServeMux
 	manager     *Manager
 	redisClient redis.UniversalClient // Optional external Redis client
+	logger      logger.Interface
 }
 
 // NewServer creates a Server with an explicit Redis client.
@@ -34,22 +35,24 @@ func NewServer(cfg *Config, redisClient redis.UniversalClient, opts ...Option) (
 	}
 
 	serveMux := NewServeMux()
-	manager, err := NewManagerWithRedis(cfg, serveMux, redisClient)
-	if err != nil {
-		return nil, err
-	}
 
 	s := &Server{
 		config:      cfg,
 		serveMux:    serveMux,
-		manager:     manager,
 		redisClient: redisClient,
+		logger:      logger.Default,
 	}
 
-	// Apply functional options
+	// Apply functional options first so WithLogger takes effect before Manager is created.
 	for _, opt := range opts {
 		opt(s)
 	}
+
+	manager, err := NewManagerWithRedis(cfg, serveMux, redisClient, s.logger)
+	if err != nil {
+		return nil, err
+	}
+	s.manager = manager
 
 	setDefaultWithWarn(s)
 	return s, nil
@@ -102,13 +105,13 @@ func (s *Server) Run(ctx context.Context, serveMux *ServeMux) error {
 		}
 		serveMux.mu.RUnlock()
 	}
-	log.Printf("[Async Queue Server] starting | queues=%d", len(s.config.Queues))
+	s.logger.Info(ctx, "[async queue server] starting | queues=%d", len(s.config.Queues))
 
 	err := s.manager.Run(ctx, s.shutdownTimeout())
 	if err != nil {
-		log.Printf("[Async Queue Server] exited with error | %v", err)
+		s.logger.Error(ctx, "[async queue server] exited with error | %v", err)
 	} else {
-		log.Printf("[Async Queue Server] stopped gracefully")
+		s.logger.Info(ctx, "[async queue server] stopped gracefully")
 	}
 	return err
 }
