@@ -18,9 +18,10 @@ import (
 
 // OrderJob handles order creation.
 type OrderJob struct {
-	OrderID     int     `json:"order_id"`
-	UserID      int     `json:"user_id"`
-	TotalAmount float64 `json:"total_amount"`
+	OrderID     int       `json:"order_id"`
+	UserID      int       `json:"user_id"`
+	TotalAmount float64   `json:"total_amount"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 func (j *OrderJob) GetType() string { return "order" }
@@ -92,16 +93,12 @@ func main() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 
-		queue, err := s.Queue("order")
-		if err != nil {
-			log.Printf("[Push] failed to get queue: %v", err)
-		}
+		queue, _ := s.Queue("order")
 
 		orderID := 1000
 		for {
 			select {
 			case <-ctx.Done():
-				log.Println("[Main] shutting down...")
 				return
 			case <-ticker.C:
 				orderID++
@@ -109,13 +106,11 @@ func main() {
 					OrderID:     orderID,
 					UserID:      orderID % 100,
 					TotalAmount: float64(orderID%500 + 50),
+					CreatedAt:   time.Now(),
 				}
 				queue.PushJob(ctx, job, 0)
 			}
 		}
 	}()
-	log.Println("[Main] running, press Ctrl+C to stop")
 	wg.Wait()
-
-	log.Println("[Main] stopped")
 }
