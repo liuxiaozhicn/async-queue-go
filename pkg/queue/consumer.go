@@ -200,7 +200,7 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 		}
 	}()
 
-	c.logger.Info(ctx, "[Consumer:%s-%d] RUN |payload:%s attempts:%d/%d", c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts)
+	c.logger.Info(ctx, "[Consumer:%s-%d] PROC |payload:%s attempts:%d/%d", c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts)
 	// The handler has finished; now we must commit the message disposition
 	// (ack/retry/fail/requeue). This context is detached from cancellation
 	// to guarantee delivery semantics — a completed handler whose result
