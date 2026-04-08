@@ -30,9 +30,6 @@ type Manager struct {
 	errMu   sync.Mutex
 	errors  map[string]error
 	started bool
-
-	// Worker restart tracking
-	restartWg sync.WaitGroup // Tracks restart goroutines
 }
 
 // NewManager creates a queue manager.
@@ -87,7 +84,7 @@ func NewManagerWithRedis(config *Config, serveMux *ServeMux, redisClient redis.U
 	}, nil
 }
 
-func (m *Manager) checkStartWorkerOption() error {
+func (m *Manager) checkStartWorkerOptions() error {
 	for name, qCfg := range m.config.Queues {
 		if !qCfg.Enabled {
 			continue
@@ -115,7 +112,7 @@ func (m *Manager) StartWorker() error {
 		return errors.New("[Manager] already started")
 	}
 
-	if err := m.checkStartWorkerOption(); err != nil {
+	if err := m.checkStartWorkerOptions(); err != nil {
 		return err
 	}
 
@@ -348,16 +345,16 @@ func (m *Manager) runWorkerWithAutoRestart(queueName string, processID int, w *i
 
 const logo = `
 
-   ╭──────────────────────────────────────────────────────────────────────╮
-   │    ___                            _____                              │
-   │   / _ \                          |  _  |                             │
-   │  / /_\ \ ___  _   _  _ __    ___ | | | | _   _   ___  _   _   ___    │
-   │  |  _  |/ __|| | | || '_ \  / __|| | | || | | | / _ \| | | | / _ \   │
-   │  | | | |\__ \| |_| || | | || (__ \ \/' /| |_| ||  __/| |_| ||  __/   │
-   │  \_| |_/|___/ \__, ||_| |_| \___| \_/\_\ \__,_| \___| \__,_| \___|   │
+   ╭======================================================================╮
+   │    ___                             _____                             │
+   │   / _ \                           |  _  |                            │
+   │  / /_\ \ ___  _   _  _ __    ___  | | | | _   _   ___  _   _   ___   │
+   │  |  _  |/ __|| | | || '_ \  / __| | | | || | | | / _ \| | | | / _ \  │
+   │  | | | |\__ \| |_| || | | || (__  \ \/' /| |_| ||  __/| |_| ||  __/  │
+   │  \_| |_/|___/ \__, ||_| |_| \___|  \_/\_\ \__,_| \___| \__,_| \___|  │
    │                __/ |                                                 │
    │               |___/                                                  │
-   ╰──────────────────────────────────────────────────────────────────────╯
+   ╰======================================================================╯
 
 `
 

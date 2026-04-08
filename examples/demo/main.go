@@ -18,18 +18,18 @@ import (
 
 // OrderJob handles order creation.
 type OrderJob struct {
-	OrderID     string    `json:"order_id"`
+	OrderNo     string    `json:"order_no"`
 	UserID      int       `json:"user_id"`
 	TotalAmount float64   `json:"total_amount"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 
-func generateOrderID() string {
+func generateOrderNo() string {
 	b := make([]byte, 4)
 	_, _ = rand.Read(b)
 	randPart := fmt.Sprintf("%08x", b) // 8位随机hex
 	datePart := time.Now().Format("20060102")
-	return fmt.Sprintf("ORD-%s-%s", datePart, randPart)
+	return fmt.Sprintf("bn-%s-%s", datePart, randPart)
 }
 
 func (j *OrderJob) GetType() string { return "order" }
@@ -124,10 +124,9 @@ func main() {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				orderID := generateOrderID()
+				orderNo := generateOrderNo()
 				job := &OrderJob{
-
-					OrderID:     orderID,
+					OrderNo:     orderNo,
 					UserID:      rand.Intn(1000) + 1,
 					TotalAmount: float64(rand.Intn(95000)+1000) / 100.0,
 					CreatedAt:   time.Now(),

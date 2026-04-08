@@ -121,7 +121,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 			c.logger.Info(ctx, "[Consumer:%s-%d] context cancelled, waiting for running jobs to finish...", c.name, c.processID)
 			start := time.Now()
 			wg.Wait()
-			c.logger.Info(ctx, "[Consumer:%s-%d] all running jobs finished, waited %v", time.Since(start), c.name, c.processID)
+			c.logger.Info(ctx, "[Consumer:%s-%d] all running jobs finished, waited %v", c.name, c.processID, time.Since(start))
 			return c.runErr()
 		default:
 		}
@@ -155,7 +155,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 				c.logger.Error(ctx, "[Consumer:%s-%d:handleOneError]payload:%s attempts:%d/%d error:%v", c.name, c.processID, msg.Payload, msg.Attempts, msg.MaxAttempts, err)
 				c.incrErrors(err)
 			} else {
-				c.logger.Info(ctx, "[Consumer:%s-%d] DONE|payload:%s attempts:%d/%d", c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts)
+				c.logger.Info(ctx, "[Consumer:%s-%d] DONE|payload:%s attempts:%d/%d", c.name, c.processID, msg.Payload, msg.Attempts, msg.MaxAttempts)
 			}
 		}(data, message)
 	}
@@ -189,10 +189,16 @@ func (c *Consumer) runErr() error {
 }
 
 func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Message) error {
+	// The handler has finished; now we must commit the message disposition
+	// (ack/retry/fail/requeue). This context is detached from cancellation
+	// to guarantee delivery semantics — a completed handler whose result
+	// is not committed leads to duplicate processing.
+	atomicCtx := context.WithoutCancel(ctx)
+
 	defer func() {
 		if r := recover(); r != nil {
 			c.logger.Error(ctx, "[Consumer:%s-%d:handleOne] panic: payload:%s attempts:%d/%d panic:%v", c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts, r)
-			err := c.handleError(context.Background(), data, message)
+			err := c.handleError(atomicCtx, data, message)
 			if err != nil {
 				c.logger.Error(ctx, "[Consumer:%s-%d:handleOne] error: err :%#v | payload:%s attempts:%d/%d nextAttempt:%d",
 					c.name, c.processID, err, message.Payload, message.Attempts, message.MaxAttempts, message.Attempts+1)
@@ -200,15 +206,9 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 		}
 	}()
 
-	c.logger.Info(ctx, "[Consumer:%s-%d] PROC |payload:%s attempts:%d/%d", c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts)
-	// The handler has finished; now we must commit the message disposition
-	// (ack/retry/fail/requeue). This context is detached from cancellation
-	// to guarantee delivery semantics — a completed handler whose result
-	// is not committed leads to duplicate processing.
-	atomicCtx := context.WithoutCancel(ctx)
+	c.logger.Info(ctx, "[Consumer:%s-%d] PROC|payload:%s attempts:%d/%d", c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts)
 	handleTimeoutCtx, cancel := context.WithTimeout(atomicCtx, time.Duration(c.handleTimeout)*time.Second)
 	defer cancel()
-
 	result, err := c.handler.Handle(handleTimeoutCtx, message)
 	if err != nil {
 		c.logger.Error(ctx, "[Consumer:%s-%d:handleOne] FAIL payload:%s result:%s attempts:%d/%d error:%v", c.name, c.processID, message.Payload, "error", message.Attempts, message.MaxAttempts, err)
