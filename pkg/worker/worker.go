@@ -38,11 +38,18 @@ func (w *Worker) Start(ctx context.Context) error {
 	w.err = nil
 	w.started = true
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				w.mu.Lock()
+				w.err = fmt.Errorf("worker panic: %v", r)
+				w.mu.Unlock()
+			}
+			close(w.done)
+		}()
 		err := w.runner.Run(w.ctx)
 		w.mu.Lock()
 		w.err = err
 		w.mu.Unlock()
-		close(w.done)
 	}()
 	return nil
 }

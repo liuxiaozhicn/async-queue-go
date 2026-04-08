@@ -24,14 +24,6 @@ type OrderJob struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
-func generateOrderNo() string {
-	b := make([]byte, 4)
-	_, _ = rand.Read(b)
-	randPart := fmt.Sprintf("%08x", b) // 8位随机hex
-	datePart := time.Now().Format("20060102")
-	return fmt.Sprintf("bn-%s-%s", datePart, randPart)
-}
-
 func (j *OrderJob) GetType() string { return "order" }
 
 // OrderJobHandler handles order creation.
@@ -48,6 +40,14 @@ func (h *OrderJobHandler) Handle(ctx context.Context, m *core.Message) (core.Res
 		return core.RETRY, ctx.Err()
 	}
 	return core.ACK, nil
+}
+
+func generateOrderNo() string {
+	b := make([]byte, 4)
+	_, _ = rand.Read(b)
+	randPart := fmt.Sprintf("%08x", b) // 8位随机hex
+	datePart := time.Now().Format("20060102")
+	return fmt.Sprintf("bn-%s-%s", datePart, randPart)
 }
 
 func main() {

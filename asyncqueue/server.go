@@ -3,6 +3,7 @@ package asyncqueue
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/liuxiaozhicn/async-queue-go/pkg/logger"
@@ -154,4 +155,25 @@ func (s *Server) shutdownTimeout() time.Duration {
 		}
 	}
 	return time.Duration(maxTimeout) * time.Second
+}
+
+const logo = `
+
+   ╭======================================================================╮
+   │    ___                             _____                             │
+   │   / _ \                           |  _  |                            │
+   │  / /_\ \ ___  _   _  _ __    ___  | | | | _   _   ___  _   _   ___   │
+   │  |  _  |/ __|| | | || '_ \  / __| | | | || | | | / _ \| | | | / _ \  │
+   │  | | | |\__ \| |_| || | | || (__  \ \/' /| |_| ||  __/| |_| ||  __/  │
+   │  \_| |_/|___/ \__, ||_| |_| \___|  \_/\_\ \__,_| \___| \__,_| \___|  │
+   │                __/ |                                                 │
+   │               |___/                                                  │
+   ╰======================================================================╯
+
+`
+
+// Banner prints a startup banner to stdout and logs structured startup info.
+func Banner(l logger.Interface) {
+	fmt.Print(logo)
+	l.Info(context.Background(), "async-queue server started")
 }

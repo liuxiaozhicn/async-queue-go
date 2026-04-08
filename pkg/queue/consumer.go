@@ -65,10 +65,8 @@ type Consumer struct {
 	hooks  ConsumerHooks
 	logger logger.Interface
 
-	name string
-
+	name      string
 	processID int
-
 	processed int64
 	acked     int64
 	retried   int64
