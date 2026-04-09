@@ -18,10 +18,9 @@ import (
 
 // OrderJob handles order creation.
 type OrderJob struct {
-	OrderNo     string    `json:"order_no"`
-	UserID      int       `json:"user_id"`
-	TotalAmount float64   `json:"total_amount"`
-	CreatedAt   time.Time `json:"created_at"`
+	OrderNo     string  `json:"order_no"`
+	UserID      int     `json:"user_id"`
+	TotalAmount float64 `json:"total_amount"`
 }
 
 func (j *OrderJob) GetType() string { return "order" }
@@ -129,7 +128,6 @@ func main() {
 					OrderNo:     orderNo,
 					UserID:      rand.Intn(1000) + 1,
 					TotalAmount: float64(rand.Intn(95000)+1000) / 100.0,
-					CreatedAt:   time.Now(),
 				}
 				queue.PushJob(ctx, job, 30)
 			}
