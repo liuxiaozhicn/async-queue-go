@@ -4,16 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/liuxiaozhicn/async-queue-go/asyncqueue"
 	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
 	"github.com/redis/go-redis/v9"
 	"log"
+	"math/rand"
 	"os/signal"
 	"sync"
 	"syscall"
 	"time"
-
-	"github.com/liuxiaozhicn/async-queue-go/asyncqueue"
-	"math/rand"
 )
 
 // OrderJob handles order creation.
@@ -38,7 +37,6 @@ func (h *OrderJobHandler) Handle(ctx context.Context, m *core.Message) (core.Res
 	case <-ctx.Done():
 		return core.RETRY, ctx.Err()
 	}
-	return core.ACK, nil
 }
 
 func generateOrderNo() string {
@@ -115,9 +113,7 @@ func main() {
 		defer wg.Done()
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
-
 		queue, _ := s.Queue("order")
-
 		for {
 			select {
 			case <-ctx.Done():
@@ -129,7 +125,10 @@ func main() {
 					UserID:      rand.Intn(1000) + 1,
 					TotalAmount: float64(rand.Intn(95000)+1000) / 100.0,
 				}
-				queue.PushJob(ctx, job, 30)
+				_, err := queue.PushJob(ctx, job, 30)
+				if err != nil {
+					continue
+				}
 			}
 		}
 	}()

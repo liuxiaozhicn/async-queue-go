@@ -11,7 +11,17 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+func requireRedis(t *testing.T) {
+	t.Helper()
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
+	defer client.Close()
+	if err := client.Ping(context.Background()).Err(); err != nil {
+		t.Skipf("redis not available: %v", err)
+	}
+}
+
 func TestQueuePushMessageAndInfo(t *testing.T) {
+	requireRedis(t)
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
@@ -23,11 +33,11 @@ func TestQueuePushMessageAndInfo(t *testing.T) {
 
 	ctx := context.Background()
 	payload1, _ := json.Marshal(map[string]int{"id": 1})
-	if err := q.PushMessage(ctx, &core.Message{Payload: payload1, MaxAttempts: 2}, 0); err != nil {
+	if _, err := q.PushMessage(ctx, &core.Message{Payload: payload1, MaxAttempts: 2}, 0); err != nil {
 		t.Fatal(err)
 	}
 	payload2, _ := json.Marshal(map[string]int{"id": 2})
-	if err := q.PushMessage(ctx, &core.Message{Payload: payload2, MaxAttempts: 2}, 5); err != nil {
+	if _, err := q.PushMessage(ctx, &core.Message{Payload: payload2, MaxAttempts: 2}, 5); err != nil {
 		t.Fatal(err)
 	}
 
@@ -41,6 +51,7 @@ func TestQueuePushMessageAndInfo(t *testing.T) {
 }
 
 func TestWorkerConsumesMessage(t *testing.T) {
+	requireRedis(t)
 
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
@@ -53,7 +64,7 @@ func TestWorkerConsumesMessage(t *testing.T) {
 
 	ctx := context.Background()
 	payload, _ := json.Marshal(map[string]string{"kind": "once"})
-	if err := q.PushMessage(ctx, &core.Message{Payload: payload, MaxAttempts: 2}, 0); err != nil {
+	if _, err := q.PushMessage(ctx, &core.Message{Payload: payload, MaxAttempts: 2}, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -93,6 +104,7 @@ func TestWorkerConsumesMessage(t *testing.T) {
 }
 
 func TestQueuePushJobAndInfo(t *testing.T) {
+	requireRedis(t)
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
@@ -110,7 +122,7 @@ func TestQueuePushJobAndInfo(t *testing.T) {
 		Subject: "Test",
 		Body:    "Hello",
 	}
-	if err := q.PushJob(ctx, job1, 0); err != nil {
+	if _, err := q.PushJob(ctx, job1, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -120,7 +132,7 @@ func TestQueuePushJobAndInfo(t *testing.T) {
 		Subject: "Delayed",
 		Body:    "World",
 	}
-	if err := q.PushJob(ctx, job2, 5); err != nil {
+	if _, err := q.PushJob(ctx, job2, 5); err != nil {
 		t.Fatal(err)
 	}
 
@@ -134,6 +146,7 @@ func TestQueuePushJobAndInfo(t *testing.T) {
 }
 
 func TestQueuePushJobNilJob(t *testing.T) {
+	requireRedis(t)
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
@@ -144,13 +157,14 @@ func TestQueuePushJobNilJob(t *testing.T) {
 	defer func() { _ = q.Close() }()
 
 	ctx := context.Background()
-	err = q.PushJob(ctx, nil, 0)
+	_, err = q.PushJob(ctx, nil, 0)
 	if err == nil {
 		t.Fatal("expected error for nil job")
 	}
 }
 
 func TestWorkerConsumesJobMessage(t *testing.T) {
+	requireRedis(t)
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
@@ -166,7 +180,7 @@ func TestWorkerConsumesJobMessage(t *testing.T) {
 		Subject: "Worker Test",
 		Body:    "Content",
 	}
-	if err := q.PushJob(ctx, job, 0); err != nil {
+	if _, err := q.PushJob(ctx, job, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -189,6 +203,8 @@ func TestWorkerConsumesJobMessage(t *testing.T) {
 	serveMux := NewServeMux()
 	serveMux.Handle("test", queue.HandlerFunc(func(ctx context.Context, m *core.Message) (core.Result, error) {
 		called++
+		receivedJob = &testEmailJob{}
+		_ = json.Unmarshal(m.Payload, receivedJob)
 		return core.ACK, nil
 	}))
 	manager, err := NewManagerWithRedis(cfg, serveMux, client, nil)

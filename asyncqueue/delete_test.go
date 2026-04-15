@@ -4,16 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
+	"github.com/liuxiaozhicn/async-queue-go/pkg/logger"
 	"testing"
 
 	"github.com/redis/go-redis/v9"
 )
 
 func TestQueueDeleteJob(t *testing.T) {
+	requireRedis(t)
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
-	q, err := NewAsyncQueue(client, "test-delete-job", 1, 1, []int{1}, 3, "")
+	q, err := NewAsyncQueue(client, "test-delete-job", 1, 1, []int{1}, 3, "", logger.Default)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,8 +30,9 @@ func TestQueueDeleteJob(t *testing.T) {
 		Body:    "This job will be deleted",
 	}
 
-	// Push the job with delay so it goes to delayed queue (can be deleted)
-	if err := q.PushJob(ctx, job, 10); err != nil { // 10 second delay
+	// Push and capture message_id for id-based deletion.
+	messageID, err := q.PushJob(ctx, job, 10)
+	if err != nil { // 10 second delay
 		t.Fatal(err)
 	}
 
@@ -42,10 +45,13 @@ func TestQueueDeleteJob(t *testing.T) {
 		t.Fatalf("expected 1 delayed job, got %d", info.Delayed)
 	}
 
-	// Delete the job
-	err = q.DeleteJob(ctx, job)
+	// Delete by message_id.
+	ok, err := q.DeleteByID(ctx, messageID)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected delete by id success")
 	}
 
 	// Verify job was deleted from delayed queue
@@ -59,10 +65,11 @@ func TestQueueDeleteJob(t *testing.T) {
 }
 
 func TestQueueDeleteJobNilJob(t *testing.T) {
+	requireRedis(t)
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
-	q, err := NewAsyncQueue(client, "test-delete-nil", 1, 1, []int{1}, 3, "")
+	q, err := NewAsyncQueue(client, "test-delete-nil", 1, 1, []int{1}, 3, "", logger.Default)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,12 +87,32 @@ func TestQueueDeleteJobNilJob(t *testing.T) {
 	}
 }
 
+func TestQueueDeleteJobRequiresMessageID(t *testing.T) {
+	requireRedis(t)
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
+	defer client.Close()
+
+	q, err := NewAsyncQueue(client, "test-delete-job-requires-id", 1, 1, []int{1}, 3, "", logger.Default)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = q.Close() }()
+
+	ctx := context.Background()
+	job := &testEmailJob{To: "a@example.com", Subject: "s", Body: "b"}
+	err = q.DeleteJob(ctx, job)
+	if err == nil {
+		t.Fatal("expected error when deleting job without message id")
+	}
+}
+
 func TestQueueDeleteMessage(t *testing.T) {
+	requireRedis(t)
 
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
-	q, err := NewAsyncQueue(client, "test-delete-message", 1, 1, []int{1}, 3, "")
+	q, err := NewAsyncQueue(client, "test-delete-message", 1, 1, []int{1}, 3, "", logger.Default)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +129,7 @@ func TestQueueDeleteMessage(t *testing.T) {
 	}
 
 	// Push the message with delay so it goes to delayed queue (can be deleted)
-	if err := q.PushMessage(ctx, message, 10); err != nil { // 10 second delay
+	if _, err := q.PushMessage(ctx, message, 10); err != nil { // 10 second delay
 		t.Fatal(err)
 	}
 
@@ -132,10 +159,11 @@ func TestQueueDeleteMessage(t *testing.T) {
 }
 
 func TestQueueDeleteMessageNilMessage(t *testing.T) {
+	requireRedis(t)
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
-	q, err := NewAsyncQueue(client, "test-delete-nil-msg", 1, 1, []int{1}, 3, "")
+	q, err := NewAsyncQueue(client, "test-delete-nil-msg", 1, 1, []int{1}, 3, "", logger.Default)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,10 +182,11 @@ func TestQueueDeleteMessageNilMessage(t *testing.T) {
 }
 
 func TestQueueDeleteJobWithDelay(t *testing.T) {
+	requireRedis(t)
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
-	q, err := NewAsyncQueue(client, "test-delete-delayed", 1, 1, []int{1}, 3, "")
+	q, err := NewAsyncQueue(client, "test-delete-delayed", 1, 1, []int{1}, 3, "", logger.Default)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,8 +201,8 @@ func TestQueueDeleteJobWithDelay(t *testing.T) {
 		Body:    "This delayed job will be deleted",
 	}
 
-	// Push the job with delay
-	if err := q.PushJob(ctx, job, 10); err != nil {
+	messageID, err := q.PushJob(ctx, job, 10)
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -186,10 +215,12 @@ func TestQueueDeleteJobWithDelay(t *testing.T) {
 		t.Fatalf("expected 1 delayed job, got %d", info.Delayed)
 	}
 
-	// Delete the delayed job
-	err = q.DeleteJob(ctx, job)
+	ok, err := q.DeleteByID(ctx, messageID)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected delete by id success")
 	}
 
 	// Verify delayed job was deleted
@@ -203,10 +234,11 @@ func TestQueueDeleteJobWithDelay(t *testing.T) {
 }
 
 func TestQueueDeleteNonExistentJob(t *testing.T) {
+	requireRedis(t)
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
-	q, err := NewAsyncQueue(client, "test-delete-nonexistent", 1, 1, []int{1}, 3, "")
+	q, err := NewAsyncQueue(client, "test-delete-nonexistent", 1, 1, []int{1}, 3, "", logger.Default)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,25 +246,22 @@ func TestQueueDeleteNonExistentJob(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Try to delete a job that doesn't exist
-	job := &testEmailJob{
-		To:      "nonexistent@example.com",
-		Subject: "Non-existent Job",
-		Body:    "This job was never pushed",
-	}
-
-	err = q.DeleteJob(ctx, job)
+	// Delete a message_id that does not exist.
+	ok, err := q.DeleteByID(ctx, "not-exists-id")
 	if err != nil {
 		t.Fatal(err)
 	}
-
+	if ok {
+		t.Fatal("expected delete false for non-existent id")
+	}
 }
 
 func TestQueueDeleteMultipleJobs(t *testing.T) {
+	requireRedis(t)
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
-	q, err := NewAsyncQueue(client, "test-delete-multiple", 1, 1, []int{1}, 3, "")
+	q, err := NewAsyncQueue(client, "test-delete-multiple", 1, 1, []int{1}, 3, "", logger.Default)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,13 +275,14 @@ func TestQueueDeleteMultipleJobs(t *testing.T) {
 	job3 := &testEmailJob{To: "user3@example.com", Subject: "Job 3", Body: "Third job"}
 
 	// Push all jobs
-	if err := q.PushJob(ctx, job1, 0); err != nil {
+	if _, err := q.PushJob(ctx, job1, 0); err != nil {
 		t.Fatal(err)
 	}
-	if err := q.PushJob(ctx, job2, 5); err != nil { // delayed
+	job2ID, err := q.PushJob(ctx, job2, 5) // delayed
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := q.PushJob(ctx, job3, 0); err != nil {
+	if _, err := q.PushJob(ctx, job3, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -265,10 +295,13 @@ func TestQueueDeleteMultipleJobs(t *testing.T) {
 		t.Fatalf("expected 2 waiting and 1 delayed job, got %d waiting and %d delayed", info.Waiting, info.Delayed)
 	}
 
-	// Delete job2 (the delayed one)
-	err = q.DeleteJob(ctx, job2)
+	// Delete job2 (the delayed one) by id
+	ok, err := q.DeleteByID(ctx, job2ID)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected delete by id success")
 	}
 
 	// Verify only job2 was deleted

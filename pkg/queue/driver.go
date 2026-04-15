@@ -17,13 +17,24 @@ type Info struct {
 type Driver interface {
 	Push(ctx context.Context, m *core.Message, delaySeconds int) error
 	Delete(ctx context.Context, m *core.Message) error
-	Pop(ctx context.Context) (string, *core.Message, error)
-	Remove(ctx context.Context, data string) error // Remove from reserved queue
-	Ack(ctx context.Context, data string) error    // Acknowledge = remove from reserved
-	Fail(ctx context.Context, data string) error   // Remove from reserved + push to failed
-	Requeue(ctx context.Context, data string) error
+	Pop(ctx context.Context) (messageID string, message *core.Message, err error)
+	Remove(ctx context.Context, messageID string) error // Remove from reserved queue
+	Ack(ctx context.Context, messageID string) error    // Acknowledge = remove from reserved
+	Fail(ctx context.Context, messageID string) error   // Remove from reserved + push to failed
+	Requeue(ctx context.Context, messageID string) error
 	Retry(ctx context.Context, m *core.Message) error
 	Reload(ctx context.Context, queue string) (int, error)
 	Flush(ctx context.Context, queue string) error
 	Info(ctx context.Context) (Info, error)
+}
+
+// MessageReader is an optional capability for reading message entities by id.
+type MessageReader interface {
+	GetMessage(ctx context.Context, id string) (*core.Message, error)
+}
+
+// MessageWriter is an optional capability for mutating message entities by id.
+type MessageWriter interface {
+	DeleteMessage(ctx context.Context, id string) (bool, error)
+	RetryMessage(ctx context.Context, id string, delaySeconds int) (bool, error)
 }

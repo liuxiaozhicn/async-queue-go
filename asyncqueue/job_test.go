@@ -25,7 +25,7 @@ func (j *testFailJob) GetType() string { return "testFailJob" }
 func TestPush(t *testing.T) {
 	t.Run("no default server returns error", func(t *testing.T) {
 		SetDefaultServer(nil)
-		err := Push(context.Background(), "q", nil, 0)
+		_, err := Push(context.Background(), "q", nil, 0)
 		if err == nil {
 			t.Error("expected error when no default server")
 		}
@@ -34,7 +34,7 @@ func TestPush(t *testing.T) {
 	t.Run("no default server propagates error from GetQueue", func(t *testing.T) {
 		SetDefaultServer(nil)
 		j := &testEmailJob{To: "a@b.com", Subject: "hi", Body: "body"}
-		err := Push(context.Background(), "q", j, 0)
+		_, err := Push(context.Background(), "q", j, 0)
 		if err == nil {
 			t.Error("expected error when no default server")
 		}

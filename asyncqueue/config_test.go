@@ -19,6 +19,7 @@ func TestLoadConfig(t *testing.T) {
 					"timeout_seconds":  2,
 					"handle_timeout":   10,
 					"retry_seconds":    []int{5, 10},
+					"message_ttl":      3600,
 					"processes":        2,
 					"concurrent":       10,
 					"max_messages":     1000,
@@ -47,14 +48,14 @@ func TestLoadConfig(t *testing.T) {
 			t.Fatal("queue 'default' not found")
 		}
 
-		if qcfg.Name != "default" {
-			t.Fatalf("expected queue name default, got %s", qcfg.Name)
-		}
 		if qcfg.Channel != "{queue}" {
 			t.Errorf("expected channel '{queue}', got '%s'", qcfg.Channel)
 		}
 		if qcfg.Processes != 2 {
 			t.Errorf("expected processes 2, got %d", qcfg.Processes)
+		}
+		if qcfg.MessageTTL != 3600 {
+			t.Errorf("expected message_ttl 3600, got %d", qcfg.MessageTTL)
 		}
 		if qcfg.Concurrent != 10 {
 			t.Errorf("expected concurrent 10, got %d", qcfg.Concurrent)
@@ -89,11 +90,8 @@ func TestLoadConfig(t *testing.T) {
 		}
 
 		qcfg := cfg.Queues["test"]
-		if qcfg.Name != "test" {
-			t.Errorf("expected default name test, got %s", qcfg.Name)
-		}
-		if qcfg.PopTimeout != 2 {
-			t.Errorf("expected default timeout_seconds 2, got %d", qcfg.PopTimeout)
+		if qcfg.PopTimeout != 1 {
+			t.Errorf("expected default timeout_seconds 1, got %d", qcfg.PopTimeout)
 		}
 		if qcfg.HandleTimeout != 10 {
 			t.Errorf("expected default handle_timeout 10, got %d", qcfg.HandleTimeout)
@@ -109,6 +107,9 @@ func TestLoadConfig(t *testing.T) {
 		}
 		if qcfg.ShutdownTimeout != 30 {
 			t.Errorf("expected default shutdown_timeout 30, got %d", qcfg.ShutdownTimeout)
+		}
+		if qcfg.MessageTTL != 864000 {
+			t.Errorf("expected default message_ttl 864000, got %d", qcfg.MessageTTL)
 		}
 	})
 

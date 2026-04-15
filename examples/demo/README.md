@@ -1,50 +1,29 @@
-```
+# Demo Example
 
-## Configuration File
+This demo runs both producer and worker in one process.
 
-The example uses `config.json`:
+## What It Demonstrates
 
-```json
-{
-  "queues": {
-    "order": {
-      "redis_addr": "127.0.0.1:6379",
-      "channel": "{queue:order}",
-      "timeout_seconds": 2,
-      "handle_timeout": 30,
-      "retry_seconds": [5, 10, 30],
-      "processes": 2,
-      "concurrent": 10,
-      "max_messages": 0,
-      "shutdown_timeout": 30,
-      "enabled": true,
-      "auto_restart": false
-    }
-  }
-}
-```
+- Registering a queue handler with `asyncqueue.Server`
+- Pushing delayed jobs with `PushJob`
+- Reading message state by `message_id` via `GetMessage`
+- Retrying and deleting messages via `RetryByID` and `DeleteByID`
+- Graceful shutdown with `SIGINT/SIGTERM`
 
-## Testing
+## Configuration
 
-Run the test suite:
+The example configuration is in [config.json](/Users/liuxiaozhi/Desktop/async-queue-go/examples/demo/config.json).
+
+## Run
 
 ```bash
-go test -v
-go test -bench=.
+go run ./examples/demo
 ```
 
-The test suite includes:
-- Job type and structure validation
-- Job processing functionality
-- Queue registration testing
-- Benchmark tests for performance
+Make sure Redis is available at `127.0.0.1:6379`.
 
-## Features Demonstrated
+## Test
 
-1. **Complete Integration**: Worker and producer in one application
-2. **Job Types**: Structured job definitions with JSON serialization
-3. **Delayed Jobs**: Support for immediate and delayed job execution
-4. **Graceful Shutdown**: Proper signal handling and cleanup
-5. **Periodic Jobs**: Automatic job generation for demonstration
-6. **Error Handling**: Comprehensive error handling and logging
-7. **Testing**: Full test coverage including benchmarks
+```bash
+go test ./examples/demo
+```

@@ -37,6 +37,13 @@ type fakeDriver struct {
 
 func (f *fakeDriver) Push(context.Context, *core.Message, int) error { return nil }
 func (f *fakeDriver) Delete(context.Context, *core.Message) error    { return nil }
+func (f *fakeDriver) GetByID(context.Context, string) (*core.Message, error) {
+	return nil, nil
+}
+func (f *fakeDriver) DeleteByID(context.Context, string) (bool, error) { return false, nil }
+func (f *fakeDriver) RetryByID(context.Context, string, int) (bool, error) {
+	return false, nil
+}
 func (f *fakeDriver) Remove(_ context.Context, _ string) error {
 	f.mu.Lock()
 	f.removeCalls++
@@ -131,7 +138,7 @@ func TestConsumerResultRouting(t *testing.T) {
 			handler := HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
 				return tc.result, tc.err
 			})
-			c := NewConsumer(d, handler, 1, 1, "", 1, 2, logger.Default.LogMode(logger.Silent))
+			c := NewConsumer(d, handler, 1, true, 1, "", 1, 2, logger.Default.LogMode(logger.Silent))
 			if err := c.Run(context.Background()); err != nil {
 				t.Fatal(err)
 			}
@@ -164,7 +171,7 @@ func TestConsumerMaxMessagesAndConcurrency(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 		atomic.AddInt32(&d.inFlight, -1)
 		return core.ACK, nil
-	}), 3, 7, "", 1, 2, logger.Default.LogMode(logger.Silent))
+	}), 3, true, 7, "", 1, 2, logger.Default.LogMode(logger.Silent))
 
 	if err := c.Run(context.Background()); err != nil {
 		t.Fatal(err)
@@ -174,6 +181,32 @@ func TestConsumerMaxMessagesAndConcurrency(t *testing.T) {
 	}
 	if d.maxInFlight > 3 {
 		t.Fatalf("expected max concurrency <=3, got %d", d.maxInFlight)
+	}
+}
+
+func TestConsumerMaxMessagesDisabledIgnoresLimit(t *testing.T) {
+	d := &fakeDriver{}
+	for i := 0; i < 10; i++ {
+		d.popItems = append(d.popItems, struct {
+			data string
+			msg  *core.Message
+		}{data: "x", msg: core.NewMessage([]byte(`{}`), 2)})
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	handled := int32(0)
+	c := NewConsumer(d, HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
+		if atomic.AddInt32(&handled, 1) >= 3 {
+			cancel()
+		}
+		return core.ACK, nil
+	}), 1, false, 1, "", 1, 2, logger.Default.LogMode(logger.Silent))
+
+	if err := c.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if d.ackCalls < 3 {
+		t.Fatalf("expected maxMessages limit ignored when disabled, got ack=%d", d.ackCalls)
 	}
 }
 
@@ -188,7 +221,7 @@ func TestConsumerRunReturnsAggregatedErrors(t *testing.T) {
 
 	c := NewConsumer(d, HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
 		return core.ACK, nil
-	}), 2, 3, "", 1, 2, logger.Default.LogMode(logger.Silent))
+	}), 2, true, 3, "", 1, 2, logger.Default.LogMode(logger.Silent))
 
 	err := c.Run(context.Background())
 	if err == nil {
@@ -226,7 +259,7 @@ func TestConsumerHooksAndStats(t *testing.T) {
 		res := results[idx]
 		idx++
 		return res, nil
-	}), 1, 4, ConsumerHooks{
+	}), 1, true, 4, ConsumerHooks{
 		OnAck: func(context.Context, *core.Message) { ackN++ },
 		OnRetry: func(context.Context, *core.Message) {
 			retryN++
@@ -269,7 +302,7 @@ func TestConsumerShutdownDrainsInFlight(t *testing.T) {
 		started <- struct{}{}
 		<-release
 		return core.ACK, nil
-	}), 2, 2, "", 1, 2, logger.Default.LogMode(logger.Silent))
+	}), 2, true, 2, "", 1, 2, logger.Default.LogMode(logger.Silent))
 
 	done := make(chan error, 1)
 	go func() {

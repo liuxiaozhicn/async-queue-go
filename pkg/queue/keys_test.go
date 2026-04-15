@@ -4,7 +4,7 @@ import "testing"
 
 func TestNewKeysAndGet(t *testing.T) {
 	k := NewKeys("test")
-	if k.Waiting != "test:waiting" || k.Reserved != "test:reserved" || k.Delayed != "test:delayed" || k.Timeout != "test:timeout" || k.Failed != "test:failed" {
+	if k.Waiting != "{test}:waiting" || k.Reserved != "{test}:reserved" || k.Delayed != "{test}:delayed" || k.Timeout != "{test}:timeout" || k.Failed != "{test}:failed" {
 		t.Fatalf("unexpected keys: %#v", k)
 	}
 

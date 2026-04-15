@@ -106,13 +106,13 @@ func (s *Server) Run(ctx context.Context, serveMux *ServeMux) error {
 		}
 		serveMux.mu.RUnlock()
 	}
-	s.logger.Info(ctx, "[async queue server] starting | queues=%d", len(s.config.Queues))
+	s.logger.Info(ctx, "[async-queue-server] starting | queues=%d", len(s.config.Queues))
 
 	err := s.manager.Run(ctx, s.shutdownTimeout())
 	if err != nil {
-		s.logger.Error(ctx, "[async queue server] exited with error | %v", err)
+		s.logger.Error(ctx, "[async-queue-server] exited with error | %v", err)
 	} else {
-		s.logger.Info(ctx, "[async queue server] stopped gracefully")
+		s.logger.Info(ctx, "[async-queue-server] stopped gracefully")
 	}
 	return err
 }

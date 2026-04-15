@@ -31,19 +31,19 @@ func GetQueue(name string) (*Queue, error) {
 }
 
 // Push marshals job and enqueues it on the named queue via the global Server.
-func Push(ctx context.Context, queueName string, job Job, delaySeconds int) error {
+func Push(ctx context.Context, queueName string, job Job, delaySeconds int) (string, error) {
 	q, err := GetQueue(queueName)
 	if err != nil {
-		return err
+		return "", err
 	}
 	return q.PushJob(ctx, job, delaySeconds)
 }
 
 // PushMessage enqueues a raw Message on the named queue via the global Server.
-func PushMessage(ctx context.Context, queueName string, msg *core.Message, delaySeconds int) error {
+func PushMessage(ctx context.Context, queueName string, msg *core.Message, delaySeconds int) (string, error) {
 	q, err := GetQueue(queueName)
 	if err != nil {
-		return err
+		return "", err
 	}
 	return q.PushMessage(ctx, msg, delaySeconds)
 }

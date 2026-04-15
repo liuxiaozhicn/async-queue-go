@@ -58,6 +58,7 @@ type Consumer struct {
 	driver              Driver
 	handler             Handler
 	concurrentLimit     int
+	autoRestart         bool
 	maxMessages         int
 	handleTimeout       int
 	handleTimeoutAction string
@@ -79,18 +80,18 @@ type Consumer struct {
 	concurrentErr error
 }
 
-func NewConsumer(driver Driver, handler Handler, concurrentLimit int, maxMessages int, name string, processID int, handleTimeout int, l logger.Interface) *Consumer {
-	return NewConsumerWithHooks(driver, handler, concurrentLimit, maxMessages, ConsumerHooks{}, name, processID, handleTimeout, l)
+func NewConsumer(driver Driver, handler Handler, concurrentLimit int, autoRestart bool, maxMessages int, name string, processID int, handleTimeout int, l logger.Interface) *Consumer {
+	return NewConsumerWithHooks(driver, handler, concurrentLimit, autoRestart, maxMessages, ConsumerHooks{}, name, processID, handleTimeout, l)
 }
 
-func NewConsumerWithHooks(driver Driver, handler Handler, concurrentLimit int, maxMessages int, hooks ConsumerHooks, name string, processID int, handleTimeout int, l logger.Interface) *Consumer {
+func NewConsumerWithHooks(driver Driver, handler Handler, concurrentLimit int, autoRestart bool, maxMessages int, hooks ConsumerHooks, name string, processID int, handleTimeout int, l logger.Interface) *Consumer {
 	if concurrentLimit <= 0 {
 		concurrentLimit = 1
 	}
 	if l == nil {
 		l = logger.Default
 	}
-	return &Consumer{driver: driver, handler: handler, concurrentLimit: concurrentLimit, maxMessages: maxMessages, hooks: hooks, name: name, processID: processID, handleTimeout: handleTimeout, logger: l}
+	return &Consumer{driver: driver, handler: handler, concurrentLimit: concurrentLimit, autoRestart: autoRestart, maxMessages: maxMessages, hooks: hooks, name: name, processID: processID, handleTimeout: handleTimeout, logger: l}
 }
 
 func (c *Consumer) Stats() ConsumerStats {
@@ -111,7 +112,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 
 	count := 0
 	for {
-		if c.maxMessages > 0 && count >= c.maxMessages {
+		if c.autoRestart && c.maxMessages > 0 && count >= c.maxMessages {
 			break
 		}
 		select {
@@ -124,7 +125,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 		default:
 		}
 
-		data, message, err := c.driver.Pop(ctx)
+		messageID, message, err := c.driver.Pop(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				c.logger.Info(ctx, "[Consumer:%s-%d] context cancelled, waiting for running jobs to finish...", c.name, c.processID)
@@ -137,25 +138,25 @@ func (c *Consumer) Run(ctx context.Context) error {
 			wg.Wait()
 			return c.runErr()
 		}
-		if data == "" || message == nil {
+		if messageID == "" || message == nil {
 			continue
 		}
 		count++
 		atomic.AddInt64(&c.processed, 1)
-		c.logger.Info(ctx, "[Consumer:%s-%d] REC |payload:%s attempts:%d/%d", c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts)
+		c.logger.Info(ctx, "[Consumer:%s-%d] REC|id:%s payload:%s attempts:%d/%d status:%s",
+			c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, message.Status)
 		sem <- struct{}{}
 		wg.Add(1)
-		go func(data string, msg *core.Message) {
+		go func(messageID string, msg *core.Message) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			err := c.handleOne(ctx, data, msg)
+			err := c.handleOne(ctx, messageID, msg)
 			if err != nil {
-				c.logger.Error(ctx, "[Consumer:%s-%d:handleOneError]payload:%s attempts:%d/%d error:%v", c.name, c.processID, msg.Payload, msg.Attempts, msg.MaxAttempts, err)
+				c.logger.Error(ctx, "[Consumer:%s-%d:handleOneError] ERR|id:%s payload:%s attempts:%d/%d error:%v",
+					c.name, c.processID, messageID, msg.Payload, msg.Attempts, msg.MaxAttempts, err)
 				c.incrErrors(err)
-			} else {
-				c.logger.Info(ctx, "[Consumer:%s-%d] DONE|payload:%s attempts:%d/%d", c.name, c.processID, msg.Payload, msg.Attempts, msg.MaxAttempts)
 			}
-		}(data, message)
+		}(messageID, message)
 	}
 
 	wg.Wait()
@@ -186,7 +187,7 @@ func (c *Consumer) runErr() error {
 	return &ConsumerRunError{First: concurrentErr, Count: count}
 }
 
-func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Message) error {
+func (c *Consumer) handleOne(ctx context.Context, messageID string, message *core.Message) error {
 	// The handler has finished; now we must commit the message disposition
 	// (ack/retry/fail/requeue). This context is detached from cancellation
 	// to guarantee delivery semantics — a completed handler whose result
@@ -195,42 +196,45 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 
 	defer func() {
 		if r := recover(); r != nil {
-			c.logger.Error(ctx, "[Consumer:%s-%d:handleOne] panic: payload:%s attempts:%d/%d panic:%v", c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts, r)
-			err := c.handleError(atomicCtx, data, message)
+			c.logger.Error(ctx, "[Consumer:%s-%d:handleOne] PANIC|id:%s payload:%s attempts:%d/%d panic:%v",
+				c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, r)
+			err := c.handleError(atomicCtx, messageID, message)
 			if err != nil {
-				c.logger.Error(ctx, "[Consumer:%s-%d:handleOne] error: err :%#v | payload:%s attempts:%d/%d nextAttempt:%d",
-					c.name, c.processID, err, message.Payload, message.Attempts, message.MaxAttempts, message.Attempts+1)
+				c.logger.Error(ctx, "[Consumer:%s-%d:handleError] FAILOVER|id:%s payload:%s attempts:%d/%d error:%#v nextAttempt:%d",
+					c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, err, message.Attempts+1)
 			}
 		}
 	}()
 
-	c.logger.Info(ctx, "[Consumer:%s-%d] PROC|payload:%s attempts:%d/%d", c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts)
+	c.logger.Info(ctx, "[Consumer:%s-%d] PROC|id:%s payload:%s attempts:%d/%d status:%s",
+		c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, message.Status)
 	handleTimeoutCtx, cancel := context.WithTimeout(atomicCtx, time.Duration(c.handleTimeout)*time.Second)
 	defer cancel()
 	result, err := c.handler.Handle(handleTimeoutCtx, message)
 	if err != nil {
-		c.logger.Error(ctx, "[Consumer:%s-%d:handleOne] FAIL payload:%s result:%s attempts:%d/%d error:%v", c.name, c.processID, message.Payload, "error", message.Attempts, message.MaxAttempts, err)
-		return c.handleError(atomicCtx, data, message)
+		c.logger.Error(ctx, "[Consumer:%s-%d:handleOne] FAIL|id:%s payload:%s attempts:%d/%d error:%v",
+			c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, err)
+		return c.handleError(atomicCtx, messageID, message)
 	}
 
 	switch result {
 	case core.REQUEUE:
-		if err := c.driver.Remove(atomicCtx, data); err != nil {
+		if err := c.driver.Remove(atomicCtx, messageID); err != nil {
 			return err
 		}
-		if err := c.driver.Requeue(atomicCtx, data); err != nil {
+		if err := c.driver.Requeue(atomicCtx, messageID); err != nil {
 			return err
 		}
 		atomic.AddInt64(&c.requeued, 1)
-		c.logger.Info(ctx, "[Consumer:%s-%d] REQ | payload:%s attempts:%d/%d nextAttempt:%d",
-			c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts, message.Attempts+1)
+		c.logger.Info(ctx, "[Consumer:%s-%d] REQ|id:%s payload:%s attempts:%d/%d status:%s nextAttempt:%d",
+			c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, message.Status, message.Attempts+1)
 		if c.hooks.OnRequeue != nil {
 			c.hooks.OnRequeue(atomicCtx, message)
 		}
 		return nil
 
 	case core.RETRY:
-		if err := c.driver.Remove(atomicCtx, data); err != nil {
+		if err := c.driver.Remove(atomicCtx, messageID); err != nil {
 			return err
 		}
 		if message.AttemptsAllowed() {
@@ -238,19 +242,19 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 				return err
 			}
 			atomic.AddInt64(&c.retried, 1)
-			c.logger.Info(ctx, "[Consumer:%s-%d] RETRY | payload:%s attempts:%d/%d nextAttempt:%d",
-				c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts, message.Attempts+1)
+			c.logger.Info(ctx, "[Consumer:%s-%d] RETRY|id:%s payload:%s attempts:%d/%d status:%s nextAttempt:%d",
+				c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, message.Status, message.Attempts+1)
 			if c.hooks.OnRetry != nil {
 				c.hooks.OnRetry(atomicCtx, message)
 			}
 		} else {
-			// Attempts exhausted — move to failed queue (matches PHP error path)
-			if err := c.driver.Fail(atomicCtx, data); err != nil {
+			// Attempts exhausted — move to failed queue
+			if err := c.driver.Fail(atomicCtx, messageID); err != nil {
 				return err
 			}
 			atomic.AddInt64(&c.failed, 1)
-			c.logger.Info(ctx, "[Consumer:%s-%d] RETRY | payload:%s attempts:%d/%d moveTo=failed",
-				c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts)
+			c.logger.Info(ctx, "[Consumer:%s-%d] RETRY|id:%s payload:%s attempts:%d/%d status:%s moveTo=failed",
+				c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, message.Status)
 			if c.hooks.OnFail != nil {
 				c.hooks.OnFail(atomicCtx, message)
 			}
@@ -258,12 +262,12 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 		return nil
 
 	case core.DROP:
-		if err := c.driver.Remove(atomicCtx, data); err != nil {
+		if err := c.driver.Remove(atomicCtx, messageID); err != nil {
 			return err
 		}
 		atomic.AddInt64(&c.dropped, 1)
-		c.logger.Info(ctx, "[Consumer:%s-%d] DROP | payload:%s attempts:%d/%d",
-			c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts)
+		c.logger.Info(ctx, "[Consumer:%s-%d] DROP|id:%s payload:%s attempts:%d/%d status:%s",
+			c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, message.Status)
 		if c.hooks.OnDrop != nil {
 			c.hooks.OnDrop(atomicCtx, message)
 		}
@@ -272,35 +276,34 @@ func (c *Consumer) handleOne(ctx context.Context, data string, message *core.Mes
 	case core.ACK:
 		fallthrough
 	default:
-		return c.ackAndHook(atomicCtx, data, message)
+		return c.ackAndHook(atomicCtx, messageID, message)
 	}
 }
 
 // handleError processes a handler that returned an error: retry if attempts to remain, otherwise fail.
-func (c *Consumer) handleError(ctx context.Context, data string, message *core.Message) error {
+func (c *Consumer) handleError(ctx context.Context, messageID string, message *core.Message) error {
 	if message.AttemptsAllowed() {
-		if err := c.driver.Remove(ctx, data); err != nil {
+		if err := c.driver.Remove(ctx, messageID); err != nil {
 			return err
 		}
 		if err := c.driver.Retry(ctx, message); err != nil {
 			return err
 		}
 		atomic.AddInt64(&c.retried, 1)
-		// RETRY 日志：把 nextAttempt 改成 scheduledAttempt，强调"下一次调度的是第几次"
-		c.logger.Info(ctx, "[Consumer:%s-%d:handleError] RETRY | payload:%s attempt:%d/%d scheduledAttempt:%d",
-			c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts, message.Attempts+1)
+		c.logger.Info(ctx, "[Consumer:%s-%d:handleError] RETRY|id:%s payload:%s attempts:%d/%d status:%s nextAttempt:%d",
+			c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, message.Status, message.Attempts+1)
 		if c.hooks.OnRetry != nil {
 			c.hooks.OnRetry(ctx, message)
 		}
 		return nil
 	}
 
-	if err := c.driver.Fail(ctx, data); err != nil {
+	if err := c.driver.Fail(ctx, messageID); err != nil {
 		return err
 	}
 	atomic.AddInt64(&c.failed, 1)
-	c.logger.Info(ctx, "[Consumer:%s-%d：handleError] FAILED | payload:%.100s attempts:%d/%d",
-		c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts)
+	c.logger.Info(ctx, "[Consumer:%s-%d:handleError] FAILED|id:%s payload:%s attempts:%d/%d status:%s",
+		c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, message.Status)
 	if c.hooks.OnFail != nil {
 		c.hooks.OnFail(ctx, message)
 	}
@@ -309,15 +312,25 @@ func (c *Consumer) handleError(ctx context.Context, data string, message *core.M
 
 // ackAndHook acknowledges successful processing: removes from reserved,
 // increments acked counter, and fires OnAck hook. Only used for ACK result.
-func (c *Consumer) ackAndHook(ctx context.Context, data string, message *core.Message) error {
-	if err := c.driver.Ack(ctx, data); err != nil {
+func (c *Consumer) ackAndHook(ctx context.Context, messageID string, message *core.Message) error {
+	if err := c.driver.Ack(ctx, messageID); err != nil {
 		return err
 	}
+
+	logMessage := message
+	if reader, ok := c.driver.(MessageReader); ok {
+		latestMessage, err := reader.GetMessage(ctx, messageID)
+		if err == nil && latestMessage != nil {
+			*message = *latestMessage
+			logMessage = message
+		}
+	}
+
 	atomic.AddInt64(&c.acked, 1)
-	c.logger.Info(ctx, "[Consumer:%s-%d] ACK | payload:%s attempts:%d/%d",
-		c.name, c.processID, message.Payload, message.Attempts, message.MaxAttempts)
+	c.logger.Info(ctx, "[Consumer:%s-%d] ACK|id:%s payload:%s attempts:%d/%d status:%s",
+		c.name, c.processID, messageID, logMessage.Payload, logMessage.Attempts, logMessage.MaxAttempts, logMessage.Status)
 	if c.hooks.OnAck != nil {
-		c.hooks.OnAck(ctx, message)
+		c.hooks.OnAck(ctx, logMessage)
 	}
 	return nil
 }

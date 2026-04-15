@@ -45,7 +45,7 @@ func TestDefault_SetDefault(t *testing.T) {
 
 func TestDefault_PushWithNilGlobal(t *testing.T) {
 	resetDefault(t)
-	err := Push(context.Background(), "q", &testDefaultJob{}, 0)
+	_, err := Push(context.Background(), "q", &testDefaultJob{}, 0)
 	if err == nil {
 		t.Fatal("expected error when no default server")
 	}
@@ -53,7 +53,7 @@ func TestDefault_PushWithNilGlobal(t *testing.T) {
 
 func TestDefault_PushMessageWithNilGlobal(t *testing.T) {
 	resetDefault(t)
-	err := PushMessage(context.Background(), "q", &core.Message{}, 0)
+	_, err := PushMessage(context.Background(), "q", &core.Message{}, 0)
 	if err == nil {
 		t.Fatal("expected error when no default server")
 	}

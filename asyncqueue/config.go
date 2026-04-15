@@ -9,6 +9,8 @@ import (
 	"strings"
 )
 
+const defaultMessageTTLSeconds = 10 * 24 * 60 * 60
+
 type QueueConfig struct {
 	Name            string `json:"name"             yaml:"name"`
 	Channel         string `json:"channel"          yaml:"channel"`
@@ -16,6 +18,7 @@ type QueueConfig struct {
 	PopTimeout      int    `json:"pop_timeout"      yaml:"pop_timeout"`
 	HandleTimeout   int    `json:"handle_timeout"   yaml:"handle_timeout"`
 	RetrySeconds    []int  `json:"retry_seconds"    yaml:"retry_seconds"`
+	MessageTTL      int    `json:"message_ttl"      yaml:"message_ttl"`
 	MaxAttempts     int    `json:"max_attempts"     yaml:"max_attempts"`
 	Processes       int    `json:"processes"        yaml:"processes"`
 	Concurrent      int    `json:"concurrent"       yaml:"concurrent"`
@@ -57,6 +60,9 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		if len(queueCfg.RetrySeconds) == 0 {
 			queueCfg.RetrySeconds = []int{5}
+		}
+		if queueCfg.MessageTTL <= 0 {
+			queueCfg.MessageTTL = defaultMessageTTLSeconds
 		}
 		if queueCfg.MaxAttempts <= 0 {
 			queueCfg.MaxAttempts = 3

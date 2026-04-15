@@ -2,8 +2,11 @@ package queue
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/liuxiaozhicn/async-queue-go/pkg/clock"
@@ -17,8 +20,11 @@ type RedisDriver struct {
 	PopTimeout    time.Duration
 	handleTimeout time.Duration
 	retrySeconds  []int
+	messageTTL    int
 	clock         clock.Clock
 }
+
+const maxMessageSequence = int64(999999999999)
 
 func NewRedisDriver(client redis.UniversalClient, channel string, popTimeout int, handleTimeout int, retrySeconds []int) *RedisDriver {
 	return NewRedisDriverWithClock(client, channel, popTimeout, handleTimeout, retrySeconds, clock.RealClock{})
@@ -40,43 +46,186 @@ func NewRedisDriverWithClock(client redis.UniversalClient, channel string, popTi
 		PopTimeout:    time.Duration(popTimeout) * time.Second,
 		handleTimeout: time.Duration(handleTimeout) * time.Second,
 		retrySeconds:  retrySeconds,
+		messageTTL:    0,
 		clock:         c,
 	}
 }
 
+func (d *RedisDriver) SetMessageTTL(seconds int) {
+	if seconds < 0 {
+		seconds = 0
+	}
+	d.messageTTL = seconds
+}
+
+// GenerateID creates a globally unique message id per channel using Redis INCR.
+// Sequence rollover is handled atomically by Redis script with epoch bump.
+// Final id is full md5 hex string: md5("<channel>:<epoch>:<seq>").
+func (d *RedisDriver) GenerateID(ctx context.Context) (string, error) {
+	res, err := nextSeqScript.Run(
+		ctx,
+		d.client,
+		[]string{d.keys.SequenceKey, d.keys.SequenceEpoch},
+		maxMessageSequence,
+	).Result()
+	if err != nil {
+		return "", err
+	}
+
+	items, ok := res.([]interface{})
+	if !ok || len(items) != 2 {
+		return "", fmt.Errorf("unexpected sequence script result: %T", res)
+	}
+	seqStr, ok := items[0].(string)
+	if !ok {
+		return "", fmt.Errorf("invalid sequence value type: %T", items[0])
+	}
+	epochStr, ok := items[1].(string)
+	if !ok {
+		return "", fmt.Errorf("invalid sequence epoch type: %T", items[1])
+	}
+
+	payload := d.keys.Channel + ":" + epochStr + ":" + seqStr
+	sum := md5.Sum([]byte(payload))
+	return hex.EncodeToString(sum[:]), nil
+}
+
 func (d *RedisDriver) Push(ctx context.Context, m *core.Message, delaySeconds int) error {
-	data, err := m.Encode()
+	if m == nil {
+		return errors.New("message is nil")
+	}
+	id, err := d.GenerateID(ctx)
 	if err != nil {
 		return err
 	}
+	m.ID = id
+	mode := "waiting"
+	score := int64(0)
 	if delaySeconds == 0 {
-		return d.client.LPush(ctx, d.keys.Waiting, data).Err()
+		m.SetStatus(core.StatusWaiting)
+	} else {
+		mode = "delayed"
+		score = d.clock.Now().Unix() + int64(delaySeconds)
+		m.SetStatus(core.StatusDelayed)
 	}
-	score := float64(d.clock.Now().Unix() + int64(delaySeconds))
-	return d.client.ZAdd(ctx, d.keys.Delayed, redis.Z{Score: score, Member: data}).Err()
+	raw, err := m.Encode()
+	if err != nil {
+		return err
+	}
+	res, err := pushScript.Run(
+		ctx,
+		d.client,
+		[]string{d.keys.Waiting, d.keys.Delayed, d.keys.Message(m.ID)},
+		m.ID, raw, mode, score, d.messageTTL,
+	).Result()
+	if err != nil {
+		return err
+	}
+	_ = res
+	return nil
 }
 
 func (d *RedisDriver) Delete(ctx context.Context, m *core.Message) error {
-	data, err := m.Encode()
-	if err != nil {
-		return err
+	if m == nil {
+		return errors.New("message is nil")
 	}
-	return d.client.ZRem(ctx, d.keys.Delayed, data).Err()
+	if m.ID == "" {
+		return errors.New("message id is empty")
+	}
+	_, err := d.DeleteMessage(ctx, m.ID)
+	return err
+}
+
+func (d *RedisDriver) GetMessage(ctx context.Context, id string) (*core.Message, error) {
+	if id == "" {
+		return nil, errors.New("id is empty")
+	}
+	return d.loadMessage(ctx, id)
+}
+
+func (d *RedisDriver) DeleteMessage(ctx context.Context, id string) (bool, error) {
+	if id == "" {
+		return false, errors.New("id is empty")
+	}
+	res, err := deleteByIDScript.Run(
+		ctx,
+		d.client,
+		[]string{
+			d.keys.Waiting, d.keys.Reserved, d.keys.Delayed,
+			d.keys.Timeout, d.keys.Failed, d.keys.Message(id),
+		},
+		id,
+	).Result()
+	if err != nil {
+		return false, err
+	}
+	return asBoolResult(res), nil
+}
+
+func (d *RedisDriver) RetryMessage(ctx context.Context, id string, delaySeconds int) (bool, error) {
+	if id == "" {
+		return false, errors.New("id is empty")
+	}
+	msg, err := d.loadMessage(ctx, id)
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return false, nil
+		}
+		return false, err
+	}
+	msg.SetStatus(core.StatusDelayed)
+	if msg.Attempts < msg.MaxAttempts {
+		msg.Attempts++
+	}
+	raw, err := msg.Encode()
+	if err != nil {
+		return false, err
+	}
+	score := d.clock.Now().Unix() + int64(delaySeconds)
+	res, err := retryByIDScript.Run(
+		ctx,
+		d.client,
+		[]string{
+			d.keys.Waiting, d.keys.Reserved, d.keys.Delayed,
+			d.keys.Timeout, d.keys.Failed, d.keys.Message(id),
+		},
+		id, score, raw,
+	).Result()
+	if err != nil {
+		return false, err
+	}
+	return asBoolResult(res), nil
 }
 
 func (d *RedisDriver) Pop(ctx context.Context) (string, *core.Message, error) {
-	if err := d.move(ctx, d.keys.Delayed, d.keys.Waiting); err != nil {
+	now := d.clock.Now().Unix()
+	if _, err := moveScript.Run(
+		ctx,
+		d.client,
+		[]string{d.keys.Delayed, d.keys.Waiting, d.keys.MessagePrefix},
+		now, string(core.StatusWaiting),
+	).Result(); err != nil {
 		return "", nil, err
 	}
-	if err := d.move(ctx, d.keys.Reserved, d.keys.Timeout); err != nil {
+	if _, err := moveScript.Run(
+		ctx,
+		d.client,
+		[]string{d.keys.Reserved, d.keys.Timeout, d.keys.MessagePrefix},
+		now, string(core.StatusTimeout),
+	).Result(); err != nil {
 		return "", nil, err
 	}
-	score := fmt.Sprintf("%d", d.clock.Now().Add(d.handleTimeout).Unix())
-	res, err := popScript.Run(ctx, d.client, []string{d.keys.Waiting, d.keys.Reserved}, score).Result()
+
+	deadline := d.clock.Now().Add(d.handleTimeout).Unix()
+	res, err := popScript.Run(
+		ctx,
+		d.client,
+		[]string{d.keys.Waiting, d.keys.Reserved, d.keys.MessagePrefix},
+		now, deadline,
+	).Result()
 	if errors.Is(err, redis.Nil) || res == nil {
 		timer := time.NewTimer(d.PopTimeout)
 		defer timer.Stop()
-		// Queue is empty, sleep to avoid busy-loop then return
 		select {
 		case <-ctx.Done():
 			return "", nil, ctx.Err()
@@ -87,48 +236,76 @@ func (d *RedisDriver) Pop(ctx context.Context) (string, *core.Message, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	data, ok := res.(string)
-	if !ok {
+	id, ok := res.(string)
+	if !ok || id == "" {
 		return "", nil, nil
 	}
-	msg, err := core.DecodeMessage(data)
+
+	msg, err := d.loadMessage(ctx, id)
 	if err != nil {
-		return "", nil, nil
+		if errors.Is(err, redis.Nil) {
+			_ = d.Remove(ctx, id)
+			return "", nil, nil
+		}
+		return "", nil, err
 	}
-	return data, msg, nil
+	return id, msg, nil
 }
 
-// Remove removes data from the reserved queue. Used by RETRY/REQUEUE/DROP
-// and internally by Ack/Fail. Mirrors PHP's protected remove() method.
-func (d *RedisDriver) Remove(ctx context.Context, data string) error {
-	return d.client.ZRem(ctx, d.keys.Reserved, data).Err()
+func (d *RedisDriver) Remove(ctx context.Context, messageID string) error {
+	return d.client.ZRem(ctx, d.keys.Reserved, messageID).Err()
 }
 
-// Ack acknowledges successful processing by removing from reserved queue.
-func (d *RedisDriver) Ack(ctx context.Context, data string) error {
-	return d.Remove(ctx, data)
+func (d *RedisDriver) Ack(ctx context.Context, messageID string) error {
+	_, err := ackScript.Run(
+		ctx,
+		d.client,
+		[]string{d.keys.Reserved, d.keys.Message(messageID)},
+		messageID, d.clock.Now().Unix(),
+	).Result()
+	return err
 }
 
-// Fail removes from reserved queue and pushes to failed queue.
-func (d *RedisDriver) Fail(ctx context.Context, data string) error {
-	if err := d.Remove(ctx, data); err != nil {
-		return err
-	}
-	return d.client.LPush(ctx, d.keys.Failed, data).Err()
+func (d *RedisDriver) Fail(ctx context.Context, messageID string) error {
+	_, err := failScript.Run(
+		ctx,
+		d.client,
+		[]string{d.keys.Reserved, d.keys.Failed, d.keys.Message(messageID)},
+		messageID, d.clock.Now().Unix(),
+	).Result()
+	return err
 }
 
-func (d *RedisDriver) Requeue(ctx context.Context, data string) error {
-	return d.client.LPush(ctx, d.keys.Waiting, data).Err()
+func (d *RedisDriver) Requeue(ctx context.Context, messageID string) error {
+	_, err := requeueScript.Run(
+		ctx,
+		d.client,
+		[]string{d.keys.Reserved, d.keys.Waiting, d.keys.Message(messageID)},
+		messageID, d.clock.Now().Unix(),
+	).Result()
+	return err
 }
 
 func (d *RedisDriver) Retry(ctx context.Context, m *core.Message) error {
-	data, err := m.Encode()
+	if m == nil {
+		return errors.New("message is nil")
+	}
+	if m.ID == "" {
+		return errors.New("message id is empty")
+	}
+	m.SetStatus(core.StatusDelayed)
+	raw, err := m.Encode()
 	if err != nil {
 		return err
 	}
-	delay := core.RetrySeconds(d.retrySeconds, m.Attempts)
-	score := float64(d.clock.Now().Unix() + int64(delay))
-	return d.client.ZAdd(ctx, d.keys.Delayed, redis.Z{Score: score, Member: data}).Err()
+	score := d.clock.Now().Unix() + int64(core.RetrySeconds(d.retrySeconds, m.Attempts))
+	_, err = retryScript.Run(
+		ctx,
+		d.client,
+		[]string{d.keys.Reserved, d.keys.Delayed, d.keys.Message(m.ID)},
+		m.ID, score, raw,
+	).Result()
+	return err
 }
 
 func (d *RedisDriver) Reload(ctx context.Context, queue string) (int, error) {
@@ -141,18 +318,23 @@ func (d *RedisDriver) Reload(ctx context.Context, queue string) (int, error) {
 		source = k
 	}
 
-	n := 0
+	total := 0
 	for {
-		_, err := d.client.RPopLPush(ctx, source, d.keys.Waiting).Result()
-		if errors.Is(err, redis.Nil) {
-			break
-		}
+		res, err := reloadScript.Run(
+			ctx,
+			d.client,
+			[]string{source, d.keys.Waiting, d.keys.MessagePrefix},
+			d.clock.Now().Unix(),
+		).Result()
 		if err != nil {
-			return n, err
+			return total, err
 		}
-		n++
+		moved := asIntResult(res)
+		if moved <= 0 {
+			return total, nil
+		}
+		total += moved
 	}
-	return n, nil
 }
 
 func (d *RedisDriver) Flush(ctx context.Context, queue string) error {
@@ -191,11 +373,48 @@ func (d *RedisDriver) Info(ctx context.Context) (Info, error) {
 	return Info{Waiting: waiting, Reserved: reserved, Delayed: delayed, Timeout: timeout, Failed: failed}, nil
 }
 
-func (d *RedisDriver) move(ctx context.Context, from string, to string) error {
-	now := fmt.Sprintf("%d", d.clock.Now().Unix())
-	_, err := moveScript.Run(ctx, d.client, []string{from, to}, now).Result()
-	if errors.Is(err, redis.Nil) {
-		return nil
+func (d *RedisDriver) storeMessage(ctx context.Context, m *core.Message) error {
+	if m == nil || m.ID == "" {
+		return errors.New("invalid message")
 	}
-	return err
+	raw, err := m.Encode()
+	if err != nil {
+		return err
+	}
+	return d.client.Set(ctx, d.keys.Message(m.ID), raw, 0).Err()
+}
+
+func (d *RedisDriver) loadMessage(ctx context.Context, id string) (*core.Message, error) {
+	raw, err := d.client.Get(ctx, d.keys.Message(id)).Result()
+	if err != nil {
+		return nil, err
+	}
+	return core.DecodeMessage(raw)
+}
+
+func asBoolResult(v interface{}) bool {
+	switch t := v.(type) {
+	case int64:
+		return t != 0
+	case int:
+		return t != 0
+	case string:
+		return t != "" && t != "0"
+	default:
+		return false
+	}
+}
+
+func asIntResult(v interface{}) int {
+	switch t := v.(type) {
+	case int64:
+		return int(t)
+	case int:
+		return t
+	case string:
+		n, _ := strconv.Atoi(t)
+		return n
+	default:
+		return 0
+	}
 }

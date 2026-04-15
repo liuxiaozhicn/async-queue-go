@@ -136,11 +136,14 @@ func (m *Manager) StartWorker() error {
 			m.rollbackStartLocked()
 			return fmt.Errorf("[Manager] create queue %s: %w", name, err)
 		}
+		if rd, ok := queue.driver.(*iqueue.RedisDriver); ok {
+			rd.SetMessageTTL(queueCfg.MessageTTL)
+		}
 		m.queues[name] = queue
 
 		workers := make([]*iworker.Worker, 0, queueCfg.Processes)
 		for i := 0; i < queueCfg.Processes; i++ {
-			consumer := iqueue.NewConsumer(queue.driver, handler, queueCfg.Concurrent, queueCfg.MaxMessages, name, i, queueCfg.HandleTimeout, m.logger)
+			consumer := iqueue.NewConsumer(queue.driver, handler, queueCfg.Concurrent, queueCfg.AutoRestart, queueCfg.MaxMessages, name, i, queueCfg.HandleTimeout, m.logger)
 			workerInstance := iworker.NewWorker(consumer)
 
 			workers = append(workers, workerInstance)
@@ -151,7 +154,7 @@ func (m *Manager) StartWorker() error {
 				// Auto-restart mode: restart worker when it exits normally
 				go m.runWorkerWithAutoRestart(name, i, workerInstance, queue, handler, queueCfg)
 			} else {
-				// Normal mode: worker exits after max_messages or on error
+				// Normal mode: worker runs continuously until context cancel or error.
 				go func(queueName string, processID int, worker *iworker.Worker) {
 					defer m.wg.Done()
 					if err := worker.Start(m.ctx); err != nil {
@@ -169,7 +172,7 @@ func (m *Manager) StartWorker() error {
 	}
 
 	m.started = true
-	Banner(m.logger)
+	//Banner(m.logger)
 	return nil
 }
 
@@ -331,7 +334,7 @@ func (m *Manager) runWorkerWithAutoRestart(queueName string, processID int, w *i
 		}
 
 		// Create a new worker instance for restart
-		consumer := iqueue.NewConsumer(q.driver, handler, cfg.Concurrent, cfg.MaxMessages, queueName, processID, cfg.HandleTimeout, m.logger)
+		consumer := iqueue.NewConsumer(q.driver, handler, cfg.Concurrent, cfg.AutoRestart, cfg.MaxMessages, queueName, processID, cfg.HandleTimeout, m.logger)
 		w = iworker.NewWorker(consumer)
 
 		restartCount++

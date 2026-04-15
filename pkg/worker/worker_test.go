@@ -34,7 +34,7 @@ func TestWorkerStopWithTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	err := w.Stop(20 * time.Millisecond)
-	if err == nil || err.Error() != "worker shutdown timeout exceeded" {
+	if err == nil || err.Error() != "[Worker] shutdown timeout exceeded" {
 		t.Fatalf("expected shutdown timeout error, got %v", err)
 	}
 }

@@ -14,13 +14,13 @@ func TestOrderJob_GetType(t *testing.T) {
 
 func TestOrderJob_Structure(t *testing.T) {
 	job := OrderJob{
-		OrderID:     1001,
+		OrderNo:     "order-1001",
 		UserID:      42,
 		TotalAmount: 299.99,
 	}
 
-	if job.OrderID != 1001 {
-		t.Errorf("OrderID = %v, want 1001", job.OrderID)
+	if job.OrderNo != "order-1001" {
+		t.Errorf("OrderNo = %v, want order-1001", job.OrderNo)
 	}
 	if job.UserID != 42 {
 		t.Errorf("UserID = %v, want 42", job.UserID)
