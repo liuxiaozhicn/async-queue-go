@@ -143,7 +143,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 		}
 		count++
 		atomic.AddInt64(&c.processed, 1)
-		c.logger.Info(ctx, "[Consumer:%s-%d] REC|id:%s payload:%s attempts:%d/%d status:%s",
+		c.logger.Info(ctx, "[Consumer:%s-%d] REC|ID:%s payload:%s attempts:%d/%d status:%s",
 			c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, message.Status)
 		sem <- struct{}{}
 		wg.Add(1)
@@ -152,7 +152,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 			defer func() { <-sem }()
 			err := c.handleOne(ctx, messageID, msg)
 			if err != nil {
-				c.logger.Error(ctx, "[Consumer:%s-%d:handleOneError] ERR|id:%s payload:%s attempts:%d/%d error:%v",
+					c.logger.Error(ctx, "[Consumer:%s-%d:handleOneError] ERR|ID:%s payload:%s attempts:%d/%d error:%v",
 					c.name, c.processID, messageID, msg.Payload, msg.Attempts, msg.MaxAttempts, err)
 				c.incrErrors(err)
 			}
@@ -196,23 +196,23 @@ func (c *Consumer) handleOne(ctx context.Context, messageID string, message *cor
 
 	defer func() {
 		if r := recover(); r != nil {
-			c.logger.Error(ctx, "[Consumer:%s-%d:handleOne] PANIC|id:%s payload:%s attempts:%d/%d panic:%v",
+			c.logger.Error(ctx, "[Consumer:%s-%d:handleOne] PANIC|ID:%s payload:%s attempts:%d/%d panic:%v",
 				c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, r)
 			err := c.handleError(atomicCtx, messageID, message)
 			if err != nil {
-				c.logger.Error(ctx, "[Consumer:%s-%d:handleError] FAILOVER|id:%s payload:%s attempts:%d/%d error:%#v nextAttempt:%d",
+				c.logger.Error(ctx, "[Consumer:%s-%d:handleError] FAILOVER|ID:%s payload:%s attempts:%d/%d error:%#v nextAttempt:%d",
 					c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, err, message.Attempts+1)
 			}
 		}
 	}()
 
-	c.logger.Info(ctx, "[Consumer:%s-%d] PROC|id:%s payload:%s attempts:%d/%d status:%s",
+	c.logger.Info(ctx, "[Consumer:%s-%d] PROC|ID:%s payload:%s attempts:%d/%d status:%s",
 		c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, message.Status)
 	handleTimeoutCtx, cancel := context.WithTimeout(atomicCtx, time.Duration(c.handleTimeout)*time.Second)
 	defer cancel()
 	result, err := c.handler.Handle(handleTimeoutCtx, message)
 	if err != nil {
-		c.logger.Error(ctx, "[Consumer:%s-%d:handleOne] FAIL|id:%s payload:%s attempts:%d/%d error:%v",
+		c.logger.Error(ctx, "[Consumer:%s-%d:handleOne] FAIL|ID:%s payload:%s attempts:%d/%d error:%v",
 			c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, err)
 		return c.handleError(atomicCtx, messageID, message)
 	}
@@ -226,7 +226,7 @@ func (c *Consumer) handleOne(ctx context.Context, messageID string, message *cor
 			return err
 		}
 		atomic.AddInt64(&c.requeued, 1)
-		c.logger.Info(ctx, "[Consumer:%s-%d] REQ|id:%s payload:%s attempts:%d/%d status:%s nextAttempt:%d",
+			c.logger.Info(ctx, "[Consumer:%s-%d] REQ|ID:%s payload:%s attempts:%d/%d status:%s nextAttempt:%d",
 			c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, message.Status, message.Attempts+1)
 		if c.hooks.OnRequeue != nil {
 			c.hooks.OnRequeue(atomicCtx, message)
@@ -242,7 +242,7 @@ func (c *Consumer) handleOne(ctx context.Context, messageID string, message *cor
 				return err
 			}
 			atomic.AddInt64(&c.retried, 1)
-			c.logger.Info(ctx, "[Consumer:%s-%d] RETRY|id:%s payload:%s attempts:%d/%d status:%s nextAttempt:%d",
+				c.logger.Info(ctx, "[Consumer:%s-%d] RETRY|ID:%s payload:%s attempts:%d/%d status:%s nextAttempt:%d",
 				c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, message.Status, message.Attempts+1)
 			if c.hooks.OnRetry != nil {
 				c.hooks.OnRetry(atomicCtx, message)
@@ -253,7 +253,7 @@ func (c *Consumer) handleOne(ctx context.Context, messageID string, message *cor
 				return err
 			}
 			atomic.AddInt64(&c.failed, 1)
-			c.logger.Info(ctx, "[Consumer:%s-%d] RETRY|id:%s payload:%s attempts:%d/%d status:%s moveTo=failed",
+				c.logger.Info(ctx, "[Consumer:%s-%d] RETRY|ID:%s payload:%s attempts:%d/%d status:%s moveTo=failed",
 				c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, message.Status)
 			if c.hooks.OnFail != nil {
 				c.hooks.OnFail(atomicCtx, message)
@@ -266,7 +266,7 @@ func (c *Consumer) handleOne(ctx context.Context, messageID string, message *cor
 			return err
 		}
 		atomic.AddInt64(&c.dropped, 1)
-		c.logger.Info(ctx, "[Consumer:%s-%d] DROP|id:%s payload:%s attempts:%d/%d status:%s",
+			c.logger.Info(ctx, "[Consumer:%s-%d] DROP|ID:%s payload:%s attempts:%d/%d status:%s",
 			c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, message.Status)
 		if c.hooks.OnDrop != nil {
 			c.hooks.OnDrop(atomicCtx, message)
@@ -290,7 +290,7 @@ func (c *Consumer) handleError(ctx context.Context, messageID string, message *c
 			return err
 		}
 		atomic.AddInt64(&c.retried, 1)
-		c.logger.Info(ctx, "[Consumer:%s-%d:handleError] RETRY|id:%s payload:%s attempts:%d/%d status:%s nextAttempt:%d",
+			c.logger.Info(ctx, "[Consumer:%s-%d:handleError] RETRY|ID:%s payload:%s attempts:%d/%d status:%s nextAttempt:%d",
 			c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, message.Status, message.Attempts+1)
 		if c.hooks.OnRetry != nil {
 			c.hooks.OnRetry(ctx, message)
@@ -302,7 +302,7 @@ func (c *Consumer) handleError(ctx context.Context, messageID string, message *c
 		return err
 	}
 	atomic.AddInt64(&c.failed, 1)
-	c.logger.Info(ctx, "[Consumer:%s-%d:handleError] FAILED|id:%s payload:%s attempts:%d/%d status:%s",
+	c.logger.Info(ctx, "[Consumer:%s-%d:handleError] FAILED|ID:%s payload:%s attempts:%d/%d status:%s",
 		c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, message.Status)
 	if c.hooks.OnFail != nil {
 		c.hooks.OnFail(ctx, message)
@@ -327,7 +327,7 @@ func (c *Consumer) ackAndHook(ctx context.Context, messageID string, message *co
 	}
 
 	atomic.AddInt64(&c.acked, 1)
-	c.logger.Info(ctx, "[Consumer:%s-%d] ACK|id:%s payload:%s attempts:%d/%d status:%s",
+	c.logger.Info(ctx, "[Consumer:%s-%d] ACK|ID:%s payload:%s attempts:%d/%d status:%s",
 		c.name, c.processID, messageID, logMessage.Payload, logMessage.Attempts, logMessage.MaxAttempts, logMessage.Status)
 	if c.hooks.OnAck != nil {
 		c.hooks.OnAck(ctx, logMessage)

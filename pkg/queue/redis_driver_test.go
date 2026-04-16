@@ -144,20 +144,26 @@ func TestMoveDelayedAndReservedTimeoutAndReloadFlush(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, popped, err := d.Pop(ctx)
+	forwardedDelayed, forwardedTimeout, err := d.ForwardMessages(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if popped == nil {
-		t.Fatal("expected popped message moved from delayed")
+	if forwardedDelayed == 0 {
+		t.Fatal("expected delayed message moved to waiting")
+	}
+	if forwardedTimeout != 0 {
+		t.Fatalf("expected no timeout move yet, got %d", forwardedTimeout)
 	}
 
 	if err := d.client.ZAdd(ctx, d.keys.Reserved, redis.Z{Score: float64(fc.Now().Unix() - 1), Member: m.ID}).Err(); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = d.Pop(ctx)
+	_, forwardedTimeout, err = d.ForwardMessages(ctx)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if forwardedTimeout == 0 {
+		t.Fatal("expected expired reserved message moved to timeout")
 	}
 	info, _ := d.Info(ctx)
 	if info.Timeout == 0 {

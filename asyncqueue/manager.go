@@ -19,6 +19,7 @@ type Manager struct {
 	serveMux    *ServeMux
 	queues      map[string]*Queue
 	workers     map[string][]*iworker.Worker
+	forwarders  map[string]*iworker.Worker
 	redisClient redis.UniversalClient // Optional external Redis client
 	logger      logger.Interface
 
@@ -46,13 +47,14 @@ func NewManager(config *Config, serveMux *ServeMux, l logger.Interface) (*Manage
 
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Manager{
-		config:   config,
-		serveMux: serveMux,
-		queues:   make(map[string]*Queue),
-		workers:  make(map[string][]*iworker.Worker),
-		logger:   l,
-		ctx:      ctx,
-		cancel:   cancel,
+		config:     config,
+		serveMux:   serveMux,
+		queues:     make(map[string]*Queue),
+		workers:    make(map[string][]*iworker.Worker),
+		forwarders: make(map[string]*iworker.Worker),
+		logger:     l,
+		ctx:        ctx,
+		cancel:     cancel,
 	}, nil
 }
 
@@ -77,6 +79,7 @@ func NewManagerWithRedis(config *Config, serveMux *ServeMux, redisClient redis.U
 		serveMux:    serveMux,
 		queues:      make(map[string]*Queue),
 		workers:     make(map[string][]*iworker.Worker),
+		forwarders:  make(map[string]*iworker.Worker),
 		redisClient: redisClient,
 		logger:      l,
 		ctx:         ctx,
@@ -90,13 +93,13 @@ func (m *Manager) checkStartWorkerOptions() error {
 			continue
 		}
 		if _, ok := m.serveMux.Get(name); !ok {
-			return fmt.Errorf("[Manager] handler not registered for queue: %s", name)
+			return fmt.Errorf("[Async-Queue-Manager] handler not registered for queue: %s", name)
 		}
 	}
 
 	if m.redisClient != nil {
 		if err := m.redisClient.Ping(context.Background()).Err(); err != nil {
-			return fmt.Errorf("[Manager] redis not reachable: %w", err)
+			return fmt.Errorf("[Async-Queue-Manager] redis not reachable: %w", err)
 		}
 	}
 
@@ -109,7 +112,7 @@ func (m *Manager) StartWorker() error {
 	defer m.mu.Unlock()
 
 	if m.started {
-		return errors.New("[Manager] already started")
+		return errors.New("[Async-Queue-Manager] already started")
 	}
 
 	if err := m.checkStartWorkerOptions(); err != nil {
@@ -119,6 +122,7 @@ func (m *Manager) StartWorker() error {
 	m.ctx, m.cancel = context.WithCancel(context.Background())
 	m.errors = make(map[string]error, 0)
 	m.workers = make(map[string][]*iworker.Worker)
+	m.forwarders = make(map[string]*iworker.Worker)
 
 	for name, queueCfg := range m.config.Queues {
 		if !queueCfg.Enabled {
@@ -131,15 +135,28 @@ func (m *Manager) StartWorker() error {
 		var err error
 
 		// Use external Redis client
-		queue, err = NewAsyncQueue(m.redisClient, queueCfg.Channel, queueCfg.PopTimeout, queueCfg.HandleTimeout, queueCfg.RetrySeconds, queueCfg.MaxAttempts, name, m.logger)
+		queue, err = NewAsyncQueue(m.redisClient, queueCfg.Channel, queueCfg.PopTimeout, queueCfg.HandleTimeout, queueCfg.RetrySeconds, queueCfg.MessageTTL, queueCfg.MaxAttempts, name, m.logger)
 		if err != nil {
 			m.rollbackStartLocked()
-			return fmt.Errorf("[Manager] create queue %s: %w", name, err)
-		}
-		if rd, ok := queue.driver.(*iqueue.RedisDriver); ok {
-			rd.SetMessageTTL(queueCfg.MessageTTL)
+			return fmt.Errorf("[Async-Queue-Manager] create queue %s: %w", name, err)
 		}
 		m.queues[name] = queue
+
+		if forwarder := iqueue.NewForwarder(queue.driver, name, m.logger); forwarder != nil {
+			forwarderWorker := iworker.NewWorker(forwarder)
+			m.forwarders[name] = forwarderWorker
+			m.wg.Add(1)
+			go func(queueName string, worker *iworker.Worker) {
+				defer m.wg.Done()
+				if err := worker.Start(m.ctx); err != nil {
+					m.recordError(queueName, forwarderProcessID, fmt.Errorf("forwarder-start: %w", err))
+					return
+				}
+				if err := worker.Wait(); err != nil {
+					m.recordError(queueName, forwarderProcessID, fmt.Errorf("forwarder-wait: %w", err))
+				}
+			}(name, forwarderWorker)
+		}
 
 		workers := make([]*iworker.Worker, 0, queueCfg.Processes)
 		for i := 0; i < queueCfg.Processes; i++ {
@@ -184,7 +201,7 @@ func (m *Manager) Stop(timeout time.Duration) error {
 	m.mu.RUnlock()
 
 	if !started || cancel == nil {
-		return errors.New("[Manager] not started")
+		return errors.New("[Async-Queue-Manager] not started")
 	}
 
 	cancel()
@@ -200,7 +217,7 @@ func (m *Manager) Stop(timeout time.Duration) error {
 		select {
 		case <-done:
 		case <-time.After(timeout):
-			return errors.New("[Manager] stop timeout")
+			return errors.New("[Async-Queue-Manager] stop timeout")
 		}
 	}
 
@@ -208,6 +225,8 @@ func (m *Manager) Stop(timeout time.Duration) error {
 	defer m.mu.Unlock()
 	m.closeQueuesLocked()
 	m.started = false
+	m.workers = make(map[string][]*iworker.Worker)
+	m.forwarders = make(map[string]*iworker.Worker)
 	return m.runErrors()
 }
 
@@ -232,7 +251,7 @@ func (m *Manager) Run(ctx context.Context, shutdownTimeout time.Duration) error 
 	case err := <-waitDone:
 		return err
 	case <-ctx.Done():
-		m.logger.Warn(ctx, "async-queue server shutting down...")
+		m.logger.Warn(ctx, "[async-queue server] shutting down...")
 		return m.Stop(shutdownTimeout)
 	}
 }
@@ -265,7 +284,7 @@ func (m *Manager) runErrors() error {
 	for _, e := range m.errors {
 		errs = append(errs, e)
 	}
-	return fmt.Errorf("[Manager] %d error(s): %w", len(errs), errors.Join(errs...))
+	return fmt.Errorf("[Async-Queue-Manager] %d error(s): %w", len(errs), errors.Join(errs...))
 }
 func (m *Manager) rollbackStartLocked() {
 	if m.cancel != nil {
@@ -279,6 +298,7 @@ func (m *Manager) rollbackStartLocked() {
 
 	m.closeQueuesLocked()
 	m.workers = make(map[string][]*iworker.Worker)
+	m.forwarders = make(map[string]*iworker.Worker)
 	m.errors = nil
 	m.started = false
 }
@@ -309,9 +329,9 @@ func (m *Manager) runWorkerWithAutoRestart(queueName string, processID int, w *i
 		}
 
 		if restartCount == 0 {
-			m.logger.Info(m.ctx, "[Manager] runWorkerWithAutoRestart queue %s process %d started", queueName, processID)
+			m.logger.Info(m.ctx, "[Async-Queue-Manager] runWorkerWithAutoRestart queue %s process %d started", queueName, processID)
 		} else {
-			m.logger.Info(m.ctx, "[Manager] runWorkerWithAutoRestart queue %s process %d restarted (count=%d)", queueName, processID, restartCount)
+			m.logger.Info(m.ctx, "[Async-Queue-Manager] runWorkerWithAutoRestart queue %s process %d restarted (count=%d)", queueName, processID, restartCount)
 		}
 
 		// Wait for worker to finish
@@ -322,7 +342,7 @@ func (m *Manager) runWorkerWithAutoRestart(queueName string, processID int, w *i
 		case <-m.ctx.Done():
 			// Manager is shutting down, don't restart
 			if err != nil {
-				m.recordError(queueName, processID, fmt.Errorf("[Manager] runWorkerWithAutoRestart ctx.Done error : %w", err))
+				m.recordError(queueName, processID, fmt.Errorf("[Async-Queue-Manager] runWorkerWithAutoRestart ctx.Done error : %w", err))
 			}
 			return
 		default:
@@ -330,7 +350,7 @@ func (m *Manager) runWorkerWithAutoRestart(queueName string, processID int, w *i
 
 		// Worker exited (likely reached max_messages), restart it
 		if err != nil {
-			m.recordError(queueName, processID, fmt.Errorf("[Manager] runWorkerWithAutoRestart error : %w", err))
+			m.recordError(queueName, processID, fmt.Errorf("[Async-Queue-Manager] runWorkerWithAutoRestart error : %w", err))
 		}
 
 		// Create a new worker instance for restart
@@ -338,10 +358,12 @@ func (m *Manager) runWorkerWithAutoRestart(queueName string, processID int, w *i
 		w = iworker.NewWorker(consumer)
 
 		restartCount++
-		m.logger.Info(m.ctx, "[Manager] runWorkerWithAutoRestart queue %s process %d reached max messages (%d), restarting...",
+		m.logger.Info(m.ctx, "[Async-Queue-Manager] runWorkerWithAutoRestart queue %s process %d reached max messages (%d), restarting...",
 			queueName, processID, cfg.MaxMessages)
 
 		// Optional: add a small delay before restart to avoid tight loops
 		time.Sleep(100 * time.Millisecond)
 	}
 }
+
+const forwarderProcessID = -1

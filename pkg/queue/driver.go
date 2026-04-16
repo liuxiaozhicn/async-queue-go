@@ -38,3 +38,8 @@ type MessageWriter interface {
 	DeleteMessage(ctx context.Context, id string) (bool, error)
 	RetryMessage(ctx context.Context, id string, delaySeconds int) (bool, error)
 }
+
+// MessageForwarder is an optional capability for forwarding due messages.
+type MessageForwarder interface {
+	ForwardMessages(ctx context.Context) (forwardedDelayed int64, forwardedTimeout int64, err error)
+}

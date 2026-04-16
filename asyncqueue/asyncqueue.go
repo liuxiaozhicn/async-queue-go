@@ -32,8 +32,8 @@ type Queue struct {
 
 var errMessageCapabilityUnsupported = errors.New("driver does not support message management capability")
 
-// NewAsyncQueue creates a new async queue with external Redis client
-func NewAsyncQueue(client redis.UniversalClient, channel string, popTimeout int, handleTimeout int, retrySeconds []int, maxAttempts int, name string, l logger.Interface) (*Queue, error) {
+// NewAsyncQueue creates a new async queue with external Redis client.
+func NewAsyncQueue(client redis.UniversalClient, channel string, popTimeout int, handleTimeout int, retrySeconds []int, messageTTL int, maxAttempts int, name string, l logger.Interface) (*Queue, error) {
 	if client == nil {
 		return nil, errors.New("redis client cannot be nil")
 	}
@@ -44,6 +44,7 @@ func NewAsyncQueue(client redis.UniversalClient, channel string, popTimeout int,
 	}
 
 	driver := queue.NewRedisDriver(client, channel, popTimeout, handleTimeout, retrySeconds)
+	driver.SetMessageTTL(messageTTL)
 	return &Queue{client: client, driver: driver, handleTimeoutSeconds: handleTimeout, retrySeconds: retrySeconds, maxAttempts: maxAttempts, name: name, logger: l}, nil
 }
 
@@ -96,7 +97,7 @@ func (q *Queue) pushMessage(ctx context.Context, m *core.Message, delaySeconds i
 		return "", err
 	}
 
-	q.logger.Info(ctx, "[Producer:%s] PUSH|id:%s payload:%s delay:%ds maxAttempts:%d", q.name, m.ID, m.Payload, delaySeconds, m.MaxAttempts)
+	q.logger.Info(ctx, "[Producer:%s] PUSH|ID:%s payload:%s delay:%ds maxAttempts:%d", q.name, m.ID, m.Payload, delaySeconds, m.MaxAttempts)
 	return m.ID, nil
 }
 

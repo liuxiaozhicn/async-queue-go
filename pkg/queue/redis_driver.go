@@ -197,26 +197,37 @@ func (d *RedisDriver) RetryMessage(ctx context.Context, id string, delaySeconds 
 	return asBoolResult(res), nil
 }
 
-func (d *RedisDriver) Pop(ctx context.Context) (string, *core.Message, error) {
+// ForwardMessages forwards due delayed messages to waiting and expired reserved messages to timeout.
+func (d *RedisDriver) ForwardMessages(ctx context.Context) (forwardedDelayed int64, forwardedTimeout int64, err error) {
 	now := d.clock.Now().Unix()
-	if _, err := moveScript.Run(
+
+	forwardedDelayed, err = moveScript.Run(
 		ctx,
 		d.client,
 		[]string{d.keys.Delayed, d.keys.Waiting, d.keys.MessagePrefix},
 		now, string(core.StatusWaiting),
-	).Result(); err != nil {
-		return "", nil, err
+	).Int64()
+	if err != nil {
+		return 0, 0, err
 	}
-	if _, err := moveScript.Run(
+
+	forwardedTimeout, err = moveScript.Run(
 		ctx,
 		d.client,
 		[]string{d.keys.Reserved, d.keys.Timeout, d.keys.MessagePrefix},
 		now, string(core.StatusTimeout),
-	).Result(); err != nil {
-		return "", nil, err
+	).Int64()
+	if err != nil {
+		return forwardedDelayed, 0, err
 	}
 
-	deadline := d.clock.Now().Add(d.handleTimeout).Unix()
+	return forwardedDelayed, forwardedTimeout, nil
+}
+
+func (d *RedisDriver) Pop(ctx context.Context) (string, *core.Message, error) {
+	nowTs := d.clock.Now()
+	now := nowTs.Unix()
+	deadline := nowTs.Add(d.handleTimeout).Unix()
 	res, err := popScript.Run(
 		ctx,
 		d.client,
