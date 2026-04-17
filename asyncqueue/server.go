@@ -112,7 +112,7 @@ func (s *Server) Run(ctx context.Context, serveMux *ServeMux) error {
 	if err != nil {
 		s.logger.Error(ctx, "[async-queue-server] exited with error | %v", err)
 	} else {
-		s.logger.Info(ctx, "[async-queue-server] stopped gracefully")
+		s.logger.Info(ctx, "[async-queue-server] shutdown complete gracefully")
 	}
 	return err
 }

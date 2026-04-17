@@ -60,7 +60,7 @@ func main() {
 				HandleTimeout:   180,
 				ShutdownTimeout: 240,
 				Processes:       2,
-				Concurrent:      10,
+				Concurrent:      50,
 				MaxAttempts:     3,
 				RetrySeconds:    []int{5, 10, 30},
 				AutoRestart:     false,

@@ -1,10 +1,7 @@
 package core
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"time"
 )
 
@@ -89,12 +86,4 @@ func (m *Message) SetStatus(status MessageStatus) {
 	}
 	m.Status = status
 	m.UpdatedAt = now
-}
-
-func NewMessageID() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return fmt.Sprintf("%d", time.Now().UnixNano())
-	}
-	return hex.EncodeToString(b[:])
 }
