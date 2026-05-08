@@ -64,48 +64,6 @@ func TestQueueDeleteJob(t *testing.T) {
 	}
 }
 
-func TestQueueDeleteJobNilJob(t *testing.T) {
-	requireRedis(t)
-	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
-	defer client.Close()
-
-	q, err := NewAsyncQueue(client, "test-delete-nil", 1, 1, []int{1}, 0, 3, "", logger.Default)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = q.Close() }()
-
-	ctx := context.Background()
-
-	// Try to delete nil job
-	err = q.DeleteJob(ctx, nil)
-	if err == nil {
-		t.Fatal("expected error when deleting nil job")
-	}
-	if err.Error() != "job must not be nil" {
-		t.Fatalf("unexpected error message: %v", err)
-	}
-}
-
-func TestQueueDeleteJobRequiresMessageID(t *testing.T) {
-	requireRedis(t)
-	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
-	defer client.Close()
-
-	q, err := NewAsyncQueue(client, "test-delete-job-requires-id", 1, 1, []int{1}, 0, 3, "", logger.Default)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = q.Close() }()
-
-	ctx := context.Background()
-	job := &testEmailJob{To: "a@example.com", Subject: "s", Body: "b"}
-	err = q.DeleteJob(ctx, job)
-	if err == nil {
-		t.Fatal("expected error when deleting job without message id")
-	}
-}
-
 func TestQueueDeleteMessage(t *testing.T) {
 	requireRedis(t)
 

@@ -54,10 +54,10 @@ func (f *forwarder) Run(ctx context.Context) error {
 	forwardedDelayed, forwardedTimeout, err := f.driver.ForwardMessages(ctx)
 	if err != nil {
 		if ctx.Err() != nil {
-			f.logger.Info(ctx, "[Forwarder:%s] FORWARD|shutdown complete", f.queueName)
+			f.logger.Info(ctx, "[Forwarder:%s]|shutdown complete", f.queueName)
 			return nil
 		}
-		f.logger.Error(ctx, "[Forwarder:%s] FORWARD|error:%v", f.queueName, err)
+		f.logger.Error(ctx, "[Forwarder:%s]|error:%v", f.queueName, err)
 		return err
 	}
 	moved := forwardedDelayed + forwardedTimeout
@@ -66,7 +66,7 @@ func (f *forwarder) Run(ctx context.Context) error {
 	}
 	f.logger.Info(
 		ctx,
-		"[Forwarder:%s] FORWARD|delayed_forwarded:%d timeout_forwarded:%d moved:%d next:%s",
+		"[Forwarder:%s]|delayed_forwarded:%d timeout_forwarded:%d moved:%d next:%s",
 		f.queueName, forwardedDelayed, forwardedTimeout, moved, nextInterval,
 	)
 
@@ -76,16 +76,16 @@ func (f *forwarder) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			f.logger.Info(ctx, "[Forwarder:%s] FORWARD|shutdown complete", f.queueName)
+			f.logger.Info(ctx, "[Forwarder:%s]|shutdown complete", f.queueName)
 			return nil
 		case <-timer.C:
 			forwardedDelayed, forwardedTimeout, err := f.driver.ForwardMessages(ctx)
 			if err != nil {
 				if ctx.Err() != nil {
-					f.logger.Info(ctx, "[Forwarder:%s] FORWARD|shutdown complete", f.queueName)
+					f.logger.Info(ctx, "[Forwarder:%s]|shutdown complete", f.queueName)
 					return nil
 				}
-				f.logger.Error(ctx, "[Forwarder:%s] FORWARD|error:%v", f.queueName, err)
+				f.logger.Error(ctx, "[Forwarder:%s]|error:%v", f.queueName, err)
 				return err
 			}
 
@@ -97,7 +97,7 @@ func (f *forwarder) Run(ctx context.Context) error {
 			}
 			f.logger.Info(
 				ctx,
-				"[Forwarder:%s] FORWARD|delayed_forwarded:%d timeout_forwarded:%d moved:%d next:%s",
+				"[Forwarder:%s]|delayed_forwarded:%d timeout_forwarded:%d moved:%d next:%s",
 				f.queueName, forwardedDelayed, forwardedTimeout, moved, nextInterval,
 			)
 			timer.Reset(nextInterval)

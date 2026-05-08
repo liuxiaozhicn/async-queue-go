@@ -139,15 +139,6 @@ func (q *Queue) DeleteMessage(ctx context.Context, m *core.Message) error {
 	return nil
 }
 
-// DeleteJob is deprecated for id-based queue flow.
-// Use PushJob + DeleteByID instead.
-func (q *Queue) DeleteJob(ctx context.Context, job Job) error {
-	if job == nil {
-		return fmt.Errorf("job must not be nil")
-	}
-	return fmt.Errorf("delete job requires message id: use PushJob + DeleteByID")
-}
-
 func (q *Queue) Flush(ctx context.Context, queueName string) error {
 	if q == nil || q.driver == nil {
 		return errors.New("queue is nil")
