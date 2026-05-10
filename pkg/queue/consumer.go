@@ -84,21 +84,7 @@ type Consumer struct {
 	concurrentErr error
 }
 
-func NewConsumer(driver Driver, channel string, handler Handler, concurrentLimit int, autoRestart bool, maxMessages int, name string, processID int, handleTimeout int, l logger.Interface, opts ...ConsumerOption) *Consumer {
-	return NewConsumerWithHooks(driver, channel, handler, concurrentLimit, autoRestart, maxMessages, ConsumerHooks{}, name, processID, handleTimeout, l, opts...)
-}
-
-func NewConsumerWithHooks(driver Driver, channel string, handler Handler, concurrentLimit int, autoRestart bool, maxMessages int, hooks ConsumerHooks, name string, processID int, handleTimeout int, l logger.Interface, opts ...ConsumerOption) *Consumer {
-	if concurrentLimit <= 0 {
-		concurrentLimit = 1
-	}
-	if handleTimeout <= 0 {
-		handleTimeout = 10
-	}
-	if l == nil {
-		l = logger.Default
-	}
-
+func NewConsumer(driver Driver, channel string, handler Handler, opts ...ConsumerOption) *Consumer {
 	consumerOptions := defaultConsumerOptions()
 	for _, opt := range opts {
 		if opt != nil {
@@ -110,17 +96,17 @@ func NewConsumerWithHooks(driver Driver, channel string, handler Handler, concur
 		driver:          driver,
 		channel:         channel,
 		handler:         handler,
-		concurrentLimit: concurrentLimit,
-		autoRestart:     autoRestart,
-		maxMessages:     maxMessages,
+		concurrentLimit: consumerOptions.concurrentLimit,
+		autoRestart:     consumerOptions.autoRestart,
+		maxMessages:     consumerOptions.maxMessages,
 		PopTimeout:      consumerOptions.PopTimeout,
-		handleTimeout:   time.Duration(handleTimeout) * time.Second,
-		retrySeconds:    consumerOptions.retrySeconds,
+		handleTimeout:   consumerOptions.handleTimeout,
+		retrySeconds:    append([]int(nil), consumerOptions.retrySeconds...),
 		messageTTL:      consumerOptions.messageTTL,
-		hooks:           hooks,
-		name:            name,
-		processID:       processID,
-		logger:          l,
+		hooks:           consumerOptions.hooks,
+		logger:          consumerOptions.logger,
+		name:            consumerOptions.name,
+		processID:       consumerOptions.processID,
 	}
 }
 

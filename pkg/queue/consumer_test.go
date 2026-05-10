@@ -139,7 +139,17 @@ func TestConsumerResultRouting(t *testing.T) {
 			handler := HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
 				return tc.result, tc.err
 			})
-			c := NewConsumer(d, "test", handler, 1, true, 1, "", 1, 2, logger.Default.LogMode(logger.Silent))
+			c := NewConsumer(
+				d,
+				"test",
+				handler,
+				WithConsumerConcurrentLimit(1),
+				WithConsumerAutoRestart(true),
+				WithConsumerMaxMessages(1),
+				WithConsumerProcessID(1),
+				WithConsumerHandleTimeout(2*time.Second),
+				WithConsumerLogger(logger.Default.LogMode(logger.Silent)),
+			)
 			if err := c.Run(context.Background()); err != nil {
 				t.Fatal(err)
 			}
@@ -172,7 +182,14 @@ func TestConsumerMaxMessagesAndConcurrency(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 		atomic.AddInt32(&d.inFlight, -1)
 		return core.ACK, nil
-	}), 3, true, 7, "", 1, 2, logger.Default.LogMode(logger.Silent))
+	}),
+		WithConsumerConcurrentLimit(3),
+		WithConsumerAutoRestart(true),
+		WithConsumerMaxMessages(7),
+		WithConsumerProcessID(1),
+		WithConsumerHandleTimeout(2*time.Second),
+		WithConsumerLogger(logger.Default.LogMode(logger.Silent)),
+	)
 
 	if err := c.Run(context.Background()); err != nil {
 		t.Fatal(err)
@@ -201,7 +218,14 @@ func TestConsumerMaxMessagesDisabledIgnoresLimit(t *testing.T) {
 			cancel()
 		}
 		return core.ACK, nil
-	}), 1, false, 1, "", 1, 2, logger.Default.LogMode(logger.Silent))
+	}),
+		WithConsumerConcurrentLimit(1),
+		WithConsumerAutoRestart(false),
+		WithConsumerMaxMessages(1),
+		WithConsumerProcessID(1),
+		WithConsumerHandleTimeout(2*time.Second),
+		WithConsumerLogger(logger.Default.LogMode(logger.Silent)),
+	)
 
 	if err := c.Run(ctx); err != nil {
 		t.Fatal(err)
@@ -222,7 +246,14 @@ func TestConsumerRunReturnsAggregatedErrors(t *testing.T) {
 
 	c := NewConsumer(d, "test", HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
 		return core.ACK, nil
-	}), 2, true, 3, "", 1, 2, logger.Default.LogMode(logger.Silent))
+	}),
+		WithConsumerConcurrentLimit(2),
+		WithConsumerAutoRestart(true),
+		WithConsumerMaxMessages(3),
+		WithConsumerProcessID(1),
+		WithConsumerHandleTimeout(2*time.Second),
+		WithConsumerLogger(logger.Default.LogMode(logger.Silent)),
+	)
 
 	err := c.Run(context.Background())
 	if err == nil {
@@ -256,22 +287,30 @@ func TestConsumerHooksAndStats(t *testing.T) {
 	ackN, retryN, requeueN, dropN := 0, 0, 0, 0
 	results := []core.Result{core.ACK, core.RETRY, core.REQUEUE, core.DROP}
 	idx := 0
-	c := NewConsumerWithHooks(d, "test", HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
+	c := NewConsumer(d, "test", HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
 		res := results[idx]
 		idx++
 		return res, nil
-	}), 1, true, 4, ConsumerHooks{
-		OnAck: func(context.Context, *core.Message) { ackN++ },
-		OnRetry: func(context.Context, *core.Message) {
-			retryN++
-		},
-		OnRequeue: func(context.Context, *core.Message) {
-			requeueN++
-		},
-		OnDrop: func(context.Context, *core.Message) {
-			dropN++
-		},
-	}, "", 1, 2, logger.Default.LogMode(logger.Silent))
+	}),
+		WithConsumerHooks(ConsumerHooks{
+			OnAck: func(context.Context, *core.Message) { ackN++ },
+			OnRetry: func(context.Context, *core.Message) {
+				retryN++
+			},
+			OnRequeue: func(context.Context, *core.Message) {
+				requeueN++
+			},
+			OnDrop: func(context.Context, *core.Message) {
+				dropN++
+			},
+		}),
+		WithConsumerConcurrentLimit(1),
+		WithConsumerAutoRestart(true),
+		WithConsumerMaxMessages(4),
+		WithConsumerProcessID(1),
+		WithConsumerHandleTimeout(2*time.Second),
+		WithConsumerLogger(logger.Default.LogMode(logger.Silent)),
+	)
 
 	if err := c.Run(context.Background()); err != nil {
 		t.Fatal(err)
@@ -303,7 +342,14 @@ func TestConsumerShutdownDrainsInFlight(t *testing.T) {
 		started <- struct{}{}
 		<-release
 		return core.ACK, nil
-	}), 2, true, 2, "", 1, 2, logger.Default.LogMode(logger.Silent))
+	}),
+		WithConsumerConcurrentLimit(2),
+		WithConsumerAutoRestart(true),
+		WithConsumerMaxMessages(2),
+		WithConsumerProcessID(1),
+		WithConsumerHandleTimeout(2*time.Second),
+		WithConsumerLogger(logger.Default.LogMode(logger.Silent)),
+	)
 
 	done := make(chan error, 1)
 	go func() {

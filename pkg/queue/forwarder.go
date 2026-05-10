@@ -45,63 +45,45 @@ func (f *forwarder) Run(ctx context.Context) error {
 		return nil
 	}
 
-	nextInterval := f.idleInterval
-	if nextInterval <= 0 {
-		nextInterval = time.Second
+	idleInterval := f.idleInterval
+	if idleInterval <= 0 {
+		idleInterval = time.Second
 	}
 	if f.busyInterval <= 0 {
 		f.busyInterval = time.Second
 	}
 
-	forwardedDelayed, forwardedTimeout, err := f.driver.ForwardMessages(ctx, f.channel)
-	if err != nil {
-		if ctx.Err() != nil {
-			f.logger.Info(ctx, "[Forwarder:%s]|shutdown complete", f.queueName)
-			return nil
-		}
-		f.logger.Error(ctx, "[Forwarder:%s]|error:%v", f.queueName, err)
-		return err
-	}
-	moved := forwardedDelayed + forwardedTimeout
-	if moved > 0 {
-		nextInterval = f.busyInterval
-	}
-	f.logger.Info(
-		ctx,
-		"[Forwarder:%s]|delayed_forwarded:%d timeout_forwarded:%d moved:%d next:%s",
-		f.queueName, forwardedDelayed, forwardedTimeout, moved, nextInterval,
-	)
-
+	nextInterval := time.Duration(0)
 	timer := time.NewTimer(nextInterval)
 	defer timer.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			f.logger.Info(ctx, "[Forwarder:%s]|shutdown complete", f.queueName)
+			f.logger.Info(ctx, "[Forwarder:%s] shutdown complete", f.queueName)
 			return nil
 		case <-timer.C:
 			forwardedDelayed, forwardedTimeout, err := f.driver.ForwardMessages(ctx, f.channel)
 			if err != nil {
 				if ctx.Err() != nil {
-					f.logger.Info(ctx, "[Forwarder:%s]|shutdown complete", f.queueName)
+					f.logger.Info(ctx, "[Forwarder:%s] shutdown complete", f.queueName)
 					return nil
 				}
-				f.logger.Error(ctx, "[Forwarder:%s]|error:%v", f.queueName, err)
+				f.logger.Error(ctx, "[Forwarder:%s] forward failed | error=%v", f.queueName, err)
 				return err
 			}
 
-			moved := forwardedDelayed + forwardedTimeout
-			if moved > 0 {
+			totalMoved := forwardedDelayed + forwardedTimeout
+			if totalMoved > 0 {
 				nextInterval = f.busyInterval
+				f.logger.Info(
+					ctx,
+					"[Forwarder:%s] FORWARD|delayed:%d timeout:%d total:%d nextPoll:%s",
+					f.queueName, forwardedDelayed, forwardedTimeout, totalMoved, nextInterval,
+				)
 			} else {
-				nextInterval = f.idleInterval
+				nextInterval = idleInterval
 			}
-			f.logger.Info(
-				ctx,
-				"[Forwarder:%s]|delayed_forwarded:%d timeout_forwarded:%d moved:%d next:%s",
-				f.queueName, forwardedDelayed, forwardedTimeout, moved, nextInterval,
-			)
 			timer.Reset(nextInterval)
 		}
 	}

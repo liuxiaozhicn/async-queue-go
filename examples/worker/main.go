@@ -95,14 +95,11 @@ func run(ctx context.Context, args []string) error {
 		driver,
 		opts.channel,
 		queue.HandlerFunc(handler),
-		opts.concurrent,
-		autoRestart,
-		opts.maxMessages,
-		"",
-		1,
-		opts.handleTimeout,
-		nil,
+		queue.WithConsumerConcurrentLimit(opts.concurrent),
+		queue.WithConsumerAutoRestart(autoRestart),
+		queue.WithConsumerMaxMessages(opts.maxMessages),
 		queue.WithConsumerPopTimeout(time.Duration(opts.timeout)*time.Second),
+		queue.WithConsumerHandleTimeout(time.Duration(opts.handleTimeout)*time.Second),
 		queue.WithConsumerRetrySeconds(opts.retrySeconds),
 	)
 	w := worker.NewWorker(consumer)
