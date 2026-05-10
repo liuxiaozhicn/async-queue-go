@@ -8,7 +8,6 @@ import (
 
 	"github.com/liuxiaozhicn/async-queue-go/pkg/logger"
 	"github.com/liuxiaozhicn/async-queue-go/pkg/queue"
-	"github.com/redis/go-redis/v9"
 )
 
 type Option func(*Server)
@@ -16,32 +15,27 @@ type Option func(*Server)
 // Server provides a high-level entry point for loading config,
 // registering handlers, and running workers.
 type Server struct {
-	config      *Config
-	serveMux    *ServeMux
-	manager     *Manager
-	redisClient redis.UniversalClient // Optional external Redis client
-	logger      logger.Interface
+	config   *Config
+	serveMux *ServeMux
+	manager  *Manager
+	logger   logger.Interface
+	drivers  map[string]queue.Driver
 }
 
-// NewServer creates a Server with an explicit Redis client.
-//
-// redisClient is required — passing nil returns an error immediately.
-// Use opts to provide optional configuration (logger, tracer, etc.).
-func NewServer(cfg *Config, redisClient redis.UniversalClient, opts ...Option) (*Server, error) {
+// NewServer creates a Server from configuration.
+// Queue drivers are resolved from Config, and can be overridden by options.
+func NewServer(cfg *Config, opts ...Option) (*Server, error) {
 	if cfg == nil {
 		return nil, errors.New("config is required")
-	}
-	if redisClient == nil {
-		return nil, errors.New("redisClient is required — create a *redis.Client or *redis.ClusterClient and pass it in")
 	}
 
 	serveMux := NewServeMux()
 
 	s := &Server{
-		config:      cfg,
-		serveMux:    serveMux,
-		redisClient: redisClient,
-		logger:      logger.Default,
+		config:   cfg,
+		serveMux: serveMux,
+		logger:   logger.Default,
+		drivers:  make(map[string]queue.Driver),
 	}
 
 	// Apply functional options first so WithLogger takes effect before Manager is created.
@@ -49,9 +43,12 @@ func NewServer(cfg *Config, redisClient redis.UniversalClient, opts ...Option) (
 		opt(s)
 	}
 
-	manager, err := NewManagerWithRedis(cfg, serveMux, redisClient, s.logger)
+	manager, err := newManager(cfg, serveMux, s.logger)
 	if err != nil {
 		return nil, err
+	}
+	for driverName, driver := range s.drivers {
+		manager.RegisterDriver(driverName, driver)
 	}
 	s.manager = manager
 
@@ -60,18 +57,17 @@ func NewServer(cfg *Config, redisClient redis.UniversalClient, opts ...Option) (
 }
 
 // LoadServer loads configuration from a file and creates a Server.
-// Redis must be provided explicitly.
-func LoadServer(path string, redisClient redis.UniversalClient, opts ...Option) (*Server, error) {
+func LoadServer(path string, opts ...Option) (*Server, error) {
 	cfg, err := LoadConfig(path)
 	if err != nil {
 		return nil, err
 	}
-	return NewServer(cfg, redisClient, opts...)
+	return NewServer(cfg, opts...)
 }
 
 // NewServerFromConfig is an alias for LoadServer.
-func NewServerFromConfig(path string, redisClient redis.UniversalClient, opts ...Option) (*Server, error) {
-	return LoadServer(path, redisClient, opts...)
+func NewServerFromConfig(path string, opts ...Option) (*Server, error) {
+	return LoadServer(path, opts...)
 }
 
 // Handle registers a handler for a queue.

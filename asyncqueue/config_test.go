@@ -72,9 +72,8 @@ func TestLoadConfig(t *testing.T) {
 		configData := map[string]any{
 			"queues": map[string]any{
 				"test": map[string]any{
-					"redis_addr": "127.0.0.1:6379",
-					"channel":    "{queue:test}",
-					"enabled":    true,
+					"channel": "{queue:test}",
+					"enabled": true,
 				},
 			},
 		}
@@ -111,6 +110,9 @@ func TestLoadConfig(t *testing.T) {
 		if qcfg.MessageTTL != 864000 {
 			t.Errorf("expected default message_ttl 864000, got %d", qcfg.MessageTTL)
 		}
+		if qcfg.Driver != "redis" {
+			t.Errorf("expected default driver redis, got %s", qcfg.Driver)
+		}
 	})
 
 	t.Run("file not found", func(t *testing.T) {
@@ -141,20 +143,17 @@ func TestLoadConfig(t *testing.T) {
 		configData := map[string]any{
 			"queues": map[string]any{
 				"default": map[string]any{
-					"redis_addr": "127.0.0.1:6379",
-					"channel":    "{queue}",
-					"enabled":    true,
+					"channel": "{queue}",
+					"enabled": true,
 				},
 				"email": map[string]any{
-					"redis_addr": "127.0.0.1:6379",
-					"channel":    "{queue:email}",
-					"processes":  3,
-					"enabled":    true,
+					"channel":   "{queue:email}",
+					"processes": 3,
+					"enabled":   true,
 				},
 				"disabled": map[string]any{
-					"redis_addr": "127.0.0.1:6379",
-					"channel":    "{queue:disabled}",
-					"enabled":    false,
+					"channel": "{queue:disabled}",
+					"enabled": false,
 				},
 			},
 		}

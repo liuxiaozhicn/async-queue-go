@@ -15,7 +15,14 @@ func TestQueueDeleteJob(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
-	q, err := NewAsyncQueue(client, "test-delete-job", 1, 1, []int{1}, 0, 3, "", logger.Default)
+	q, err := NewAsyncQueue(newTestRedisDriver(client, "test-delete-job", 1, 1, []int{1}, 0), "test-delete-job",
+		WithQueuePopTimeout(1),
+		WithQueueHandleTimeout(1),
+		WithQueueRetrySeconds([]int{1}),
+		WithQueueMessageTTL(0),
+		WithQueueMaxAttempts(3),
+		WithQueueLogger(logger.Default),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +77,14 @@ func TestQueueDeleteMessage(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
-	q, err := NewAsyncQueue(client, "test-delete-message", 1, 1, []int{1}, 0, 3, "", logger.Default)
+	q, err := NewAsyncQueue(newTestRedisDriver(client, "test-delete-message", 1, 1, []int{1}, 0), "test-delete-message",
+		WithQueuePopTimeout(1),
+		WithQueueHandleTimeout(1),
+		WithQueueRetrySeconds([]int{1}),
+		WithQueueMessageTTL(0),
+		WithQueueMaxAttempts(3),
+		WithQueueLogger(logger.Default),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +135,14 @@ func TestQueueDeleteMessageNilMessage(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
-	q, err := NewAsyncQueue(client, "test-delete-nil-msg", 1, 1, []int{1}, 0, 3, "", logger.Default)
+	q, err := NewAsyncQueue(newTestRedisDriver(client, "test-delete-nil-msg", 1, 1, []int{1}, 0), "test-delete-nil-msg",
+		WithQueuePopTimeout(1),
+		WithQueueHandleTimeout(1),
+		WithQueueRetrySeconds([]int{1}),
+		WithQueueMessageTTL(0),
+		WithQueueMaxAttempts(3),
+		WithQueueLogger(logger.Default),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +165,14 @@ func TestQueueDeleteJobWithDelay(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
-	q, err := NewAsyncQueue(client, "test-delete-delayed", 1, 1, []int{1}, 0, 3, "", logger.Default)
+	q, err := NewAsyncQueue(newTestRedisDriver(client, "test-delete-delayed", 1, 1, []int{1}, 0), "test-delete-delayed",
+		WithQueuePopTimeout(1),
+		WithQueueHandleTimeout(1),
+		WithQueueRetrySeconds([]int{1}),
+		WithQueueMessageTTL(0),
+		WithQueueMaxAttempts(3),
+		WithQueueLogger(logger.Default),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +224,14 @@ func TestQueueDeleteNonExistentJob(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
-	q, err := NewAsyncQueue(client, "test-delete-nonexistent", 1, 1, []int{1}, 0, 3, "", logger.Default)
+	q, err := NewAsyncQueue(newTestRedisDriver(client, "test-delete-nonexistent", 1, 1, []int{1}, 0), "test-delete-nonexistent",
+		WithQueuePopTimeout(1),
+		WithQueueHandleTimeout(1),
+		WithQueueRetrySeconds([]int{1}),
+		WithQueueMessageTTL(0),
+		WithQueueMaxAttempts(3),
+		WithQueueLogger(logger.Default),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +254,14 @@ func TestQueueDeleteMultipleJobs(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
-	q, err := NewAsyncQueue(client, "test-delete-multiple", 1, 1, []int{1}, 0, 3, "", logger.Default)
+	q, err := NewAsyncQueue(newTestRedisDriver(client, "test-delete-multiple", 1, 1, []int{1}, 0), "test-delete-multiple",
+		WithQueuePopTimeout(1),
+		WithQueueHandleTimeout(1),
+		WithQueueRetrySeconds([]int{1}),
+		WithQueueMessageTTL(0),
+		WithQueueMaxAttempts(3),
+		WithQueueLogger(logger.Default),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

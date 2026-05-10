@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/liuxiaozhicn/async-queue-go/asyncqueue"
 	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
+	"github.com/liuxiaozhicn/async-queue-go/pkg/queue"
 	"github.com/redis/go-redis/v9"
 	"log"
 	"math/rand"
@@ -54,6 +55,7 @@ func main() {
 	queueCfg := &asyncqueue.Config{
 		Queues: map[string]asyncqueue.QueueConfig{
 			"order": {
+				Driver:          "redis",
 				Channel:         "queue:order",
 				Enabled:         true,
 				PopTimeout:      1,
@@ -72,8 +74,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	s, err := asyncqueue.NewServer(queueCfg, client)
-
+	s, err := asyncqueue.NewServer(queueCfg, asyncqueue.WithDriver("redis", queue.NewRedisDriver(client)))
 	if err != nil {
 		log.Fatalf("[Main] failed to load server: %v", err)
 	}

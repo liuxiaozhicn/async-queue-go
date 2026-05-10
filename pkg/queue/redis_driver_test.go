@@ -16,6 +16,8 @@ type fakeClock struct {
 	now time.Time
 }
 
+const testChannel = "test"
+
 func (f *fakeClock) Now() time.Time {
 	return f.now
 }
@@ -28,7 +30,10 @@ func newDriverForTest(t *testing.T) (*RedisDriver, *fakeClock, func()) {
 		t.Skipf("redis not available: %v", err)
 	}
 	fc := &fakeClock{now: time.Unix(1700000000, 0)}
-	d := NewRedisDriverWithClock(client, "test", 1, 1, []int{1, 2, 3}, fc)
+	d := NewRedisDriver(
+		client,
+		WithRedisDriverClock(fc),
+	)
 	cleanup := func() {
 		_ = client.Close()
 	}
@@ -39,7 +44,10 @@ func newDriverForTest(t *testing.T) (*RedisDriver, *fakeClock, func()) {
 func newDriverForTestWithClient(t *testing.T, client redis.UniversalClient) (*RedisDriver, *fakeClock, func()) {
 	t.Helper()
 	fc := &fakeClock{now: time.Unix(1700000000, 0)}
-	d := NewRedisDriverWithClock(client, "test", 1, 1, []int{1, 2, 3}, fc)
+	d := NewRedisDriver(
+		client,
+		WithRedisDriverClock(fc),
+	)
 	cleanup := func() {
 		// Don't close external client, let caller handle it
 	}
@@ -60,15 +68,15 @@ func TestPushDeleteInfo(t *testing.T) {
 	ctx := context.Background()
 
 	m1 := mustMessage(t, 1)
-	if err := d.Push(ctx, m1, 0); err != nil {
+	if err := d.Push(ctx, testChannel, m1, 0, 0); err != nil {
 		t.Fatal(err)
 	}
 	m2 := mustMessage(t, 2)
-	if err := d.Push(ctx, m2, 10); err != nil {
+	if err := d.Push(ctx, testChannel, m2, 10, 0); err != nil {
 		t.Fatal(err)
 	}
 
-	info, err := d.Info(ctx)
+	info, err := d.Info(ctx, testChannel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,10 +84,10 @@ func TestPushDeleteInfo(t *testing.T) {
 		t.Fatalf("unexpected info: %+v", info)
 	}
 
-	if err := d.Delete(ctx, m2); err != nil {
+	if err := d.Delete(ctx, testChannel, m2); err != nil {
 		t.Fatal(err)
 	}
-	info, _ = d.Info(ctx)
+	info, _ = d.Info(ctx, testChannel)
 	if info.Delayed != 0 {
 		t.Fatalf("delete failed, info=%+v", info)
 	}
@@ -91,10 +99,10 @@ func TestPopAckFailMove(t *testing.T) {
 	ctx := context.Background()
 
 	m := mustMessage(t, 1)
-	if err := d.Push(ctx, m, 0); err != nil {
+	if err := d.Push(ctx, testChannel, m, 0, 0); err != nil {
 		t.Fatal(err)
 	}
-	data, _, err := d.Pop(ctx)
+	data, _, err := d.Pop(ctx, testChannel, time.Second, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,30 +110,30 @@ func TestPopAckFailMove(t *testing.T) {
 		t.Fatal("expected data")
 	}
 
-	info, _ := d.Info(ctx)
+	info, _ := d.Info(ctx, testChannel)
 	if info.Reserved != 1 {
 		t.Fatalf("expected reserved=1 got %+v", info)
 	}
 
-	if err := d.Ack(ctx, data); err != nil {
+	if err := d.Ack(ctx, testChannel, data); err != nil {
 		t.Fatal(err)
 	}
-	info, _ = d.Info(ctx)
+	info, _ = d.Info(ctx, testChannel)
 	if info.Reserved != 0 {
 		t.Fatalf("expected reserved=0 got %+v", info)
 	}
 
-	if err := d.Push(ctx, mustMessage(t, 2), 0); err != nil {
+	if err := d.Push(ctx, testChannel, mustMessage(t, 2), 0, 0); err != nil {
 		t.Fatal(err)
 	}
-	data2, _, err := d.Pop(ctx)
+	data2, _, err := d.Pop(ctx, testChannel, time.Second, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := d.Fail(ctx, data2); err != nil {
+	if err := d.Fail(ctx, testChannel, data2); err != nil {
 		t.Fatal(err)
 	}
-	info, _ = d.Info(ctx)
+	info, _ = d.Info(ctx, testChannel)
 	if info.Failed != 1 || info.Reserved != 0 {
 		t.Fatalf("unexpected fail info: %+v", info)
 	}
@@ -135,16 +143,17 @@ func TestMoveDelayedAndReservedTimeoutAndReloadFlush(t *testing.T) {
 	d, fc, done := newDriverForTest(t)
 	defer done()
 	ctx := context.Background()
+	keys := NewKeys(testChannel)
 
 	m := mustMessage(t, 5)
-	if err := d.storeMessage(ctx, m); err != nil {
+	if err := d.storeMessage(ctx, testChannel, m); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.client.ZAdd(ctx, d.keys.Delayed, redis.Z{Score: float64(fc.Now().Unix() - 1), Member: m.ID}).Err(); err != nil {
+	if err := d.client.ZAdd(ctx, keys.Delayed, redis.Z{Score: float64(fc.Now().Unix() - 1), Member: m.ID}).Err(); err != nil {
 		t.Fatal(err)
 	}
 
-	forwardedDelayed, forwardedTimeout, err := d.ForwardMessages(ctx)
+	forwardedDelayed, forwardedTimeout, err := d.ForwardMessages(ctx, testChannel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,26 +164,26 @@ func TestMoveDelayedAndReservedTimeoutAndReloadFlush(t *testing.T) {
 		t.Fatalf("expected no timeout move yet, got %d", forwardedTimeout)
 	}
 
-	if err := d.client.ZAdd(ctx, d.keys.Reserved, redis.Z{Score: float64(fc.Now().Unix() - 1), Member: m.ID}).Err(); err != nil {
+	if err := d.client.ZAdd(ctx, keys.Reserved, redis.Z{Score: float64(fc.Now().Unix() - 1), Member: m.ID}).Err(); err != nil {
 		t.Fatal(err)
 	}
-	_, forwardedTimeout, err = d.ForwardMessages(ctx)
+	_, forwardedTimeout, err = d.ForwardMessages(ctx, testChannel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if forwardedTimeout == 0 {
 		t.Fatal("expected expired reserved message moved to timeout")
 	}
-	info, _ := d.Info(ctx)
+	info, _ := d.Info(ctx, testChannel)
 	if info.Timeout == 0 {
 		t.Fatalf("expected timeout to increase, info=%+v", info)
 	}
 
-	if _, err := d.Reload(ctx, "bad"); err == nil {
+	if _, err := d.Reload(ctx, testChannel, "bad"); err == nil {
 		t.Fatal("expected reload invalid queue error")
 	}
 
-	n, err := d.Reload(ctx, "timeout")
+	n, err := d.Reload(ctx, testChannel, "timeout")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,10 +191,10 @@ func TestMoveDelayedAndReservedTimeoutAndReloadFlush(t *testing.T) {
 		t.Fatal("expected timeout messages to be reloaded")
 	}
 
-	if err := d.Flush(ctx, "waiting"); err != nil {
+	if err := d.Flush(ctx, testChannel, "waiting"); err != nil {
 		t.Fatal(err)
 	}
-	info, _ = d.Info(ctx)
+	info, _ = d.Info(ctx, testChannel)
 	if info.Waiting != 0 {
 		t.Fatalf("expected waiting=0 after flush, got %+v", info)
 	}
@@ -195,14 +204,18 @@ func TestMessageTTLPreservedAcrossStatusUpdates(t *testing.T) {
 	d, _, done := newDriverForTest(t)
 	defer done()
 	ctx := context.Background()
+	keys := NewKeys(testChannel)
 
-	d.SetMessageTTL(120)
+	d = NewRedisDriver(
+		d.client,
+		WithRedisDriverClock(d.clock),
+	)
 	m := mustMessage(t, 42)
-	if err := d.Push(ctx, m, 0); err != nil {
+	if err := d.Push(ctx, testChannel, m, 0, 120); err != nil {
 		t.Fatal(err)
 	}
 
-	ttlAfterPush, err := d.client.TTL(ctx, d.keys.Message(m.ID)).Result()
+	ttlAfterPush, err := d.client.TTL(ctx, keys.Message(m.ID)).Result()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +223,7 @@ func TestMessageTTLPreservedAcrossStatusUpdates(t *testing.T) {
 		t.Fatalf("expected positive ttl after push, got %v", ttlAfterPush)
 	}
 
-	messageID, _, err := d.Pop(ctx)
+	messageID, _, err := d.Pop(ctx, testChannel, time.Second, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +231,7 @@ func TestMessageTTLPreservedAcrossStatusUpdates(t *testing.T) {
 		t.Fatal("expected message id from pop")
 	}
 
-	ttlAfterPop, err := d.client.TTL(ctx, d.keys.Message(m.ID)).Result()
+	ttlAfterPop, err := d.client.TTL(ctx, keys.Message(m.ID)).Result()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,10 +239,10 @@ func TestMessageTTLPreservedAcrossStatusUpdates(t *testing.T) {
 		t.Fatalf("expected positive ttl after pop, got %v", ttlAfterPop)
 	}
 
-	if err := d.Ack(ctx, messageID); err != nil {
+	if err := d.Ack(ctx, testChannel, messageID); err != nil {
 		t.Fatal(err)
 	}
-	ttlAfterAck, err := d.client.TTL(ctx, d.keys.Message(m.ID)).Result()
+	ttlAfterAck, err := d.client.TTL(ctx, keys.Message(m.ID)).Result()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,11 +256,11 @@ func TestGenerateID(t *testing.T) {
 	defer done()
 	ctx := context.Background()
 
-	id1, err := d.GenerateID(ctx)
+	id1, err := d.GenerateID(ctx, testChannel)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id2, err := d.GenerateID(ctx)
+	id2, err := d.GenerateID(ctx, testChannel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,19 +285,20 @@ func TestGenerateIDRollover(t *testing.T) {
 	d, _, done := newDriverForTest(t)
 	defer done()
 	ctx := context.Background()
+	keys := NewKeys(testChannel)
 
-	if err := d.client.Set(ctx, d.keys.SequenceKey, fmt.Sprintf("%d", maxMessageSequence), 0).Err(); err != nil {
+	if err := d.client.Set(ctx, keys.SequenceKey, fmt.Sprintf("%d", maxMessageSequence), 0).Err(); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.client.Set(ctx, d.keys.SequenceEpoch, "0", 0).Err(); err != nil {
+	if err := d.client.Set(ctx, keys.SequenceEpoch, "0", 0).Err(); err != nil {
 		t.Fatal(err)
 	}
 
-	id1, err := d.GenerateID(ctx)
+	id1, err := d.GenerateID(ctx, testChannel)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id2, err := d.GenerateID(ctx)
+	id2, err := d.GenerateID(ctx, testChannel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,14 +306,14 @@ func TestGenerateIDRollover(t *testing.T) {
 		t.Fatalf("expected unique ids across rollover, got %s", id1)
 	}
 
-	seq, err := d.client.Get(ctx, d.keys.SequenceKey).Result()
+	seq, err := d.client.Get(ctx, keys.SequenceKey).Result()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if seq != "1" {
 		t.Fatalf("expected sequence to continue from 0 to 1 after rollover, got %s", seq)
 	}
-	epoch, err := d.client.Get(ctx, d.keys.SequenceEpoch).Result()
+	epoch, err := d.client.Get(ctx, keys.SequenceEpoch).Result()
 	if err != nil {
 		t.Fatal(err)
 	}

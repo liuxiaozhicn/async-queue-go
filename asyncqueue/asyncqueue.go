@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
+
 	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
 	"github.com/liuxiaozhicn/async-queue-go/pkg/logger"
 	"github.com/liuxiaozhicn/async-queue-go/pkg/queue"
-	"github.com/redis/go-redis/v9"
 )
 
 type Info struct {
@@ -20,37 +21,55 @@ type Info struct {
 }
 
 type Queue struct {
-	client               redis.UniversalClient
-	driver               queue.Driver
-	timeoutSeconds       int
-	handleTimeoutSeconds int
-	retrySeconds         []int
-	maxAttempts          int // Maximum retry attempts from configuration
-	name                 string
-	logger               logger.Interface
+	driver        queue.Driver
+	channel       string
+	PopTimeout    time.Duration
+	handleTimeout time.Duration
+	retrySeconds  []int
+	messageTTL    int
+	maxAttempts   int // Maximum retry attempts from configuration
+	name          string
+	logger        logger.Interface
 }
 
 var errMessageCapabilityUnsupported = errors.New("driver does not support message management capability")
 
-// NewAsyncQueue creates a new async queue with external Redis client.
-func NewAsyncQueue(client redis.UniversalClient, channel string, popTimeout int, handleTimeout int, retrySeconds []int, messageTTL int, maxAttempts int, name string, l logger.Interface) (*Queue, error) {
-	if client == nil {
-		return nil, errors.New("redis client cannot be nil")
+// NewAsyncQueue creates a new async queue with a driver.
+func NewAsyncQueue(driver queue.Driver, channel string, opts ...QueueOption) (*Queue, error) {
+	if driver == nil {
+		return nil, errors.New("queue driver cannot be nil")
+	}
+	if channel == "" {
+		return nil, errors.New("channel cannot be empty")
 	}
 
-	// Test connection
-	if err := client.Ping(context.Background()).Err(); err != nil {
-		return nil, fmt.Errorf("redis ping failed: %w", err)
+	o := defaultQueueOptions(channel)
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&o)
+		}
+	}
+	if o.logger == nil {
+		o.logger = logger.Default
 	}
 
-	driver := queue.NewRedisDriver(client, channel, popTimeout, handleTimeout, retrySeconds)
-	driver.SetMessageTTL(messageTTL)
-	return &Queue{client: client, driver: driver, handleTimeoutSeconds: handleTimeout, retrySeconds: retrySeconds, maxAttempts: maxAttempts, name: name, logger: l}, nil
+	if err := driver.Ping(context.Background()); err != nil {
+		return nil, fmt.Errorf("driver ping failed: %w", err)
+	}
+
+	return &Queue{
+		driver:        driver,
+		channel:       channel,
+		PopTimeout:    time.Duration(o.popTimeout) * time.Second,
+		handleTimeout: time.Duration(o.handleTimeout) * time.Second,
+		retrySeconds:  append([]int(nil), o.retrySeconds...),
+		messageTTL:    o.messageTTL,
+		maxAttempts:   o.maxAttempts,
+		name:          o.name,
+		logger:        o.logger,
+	}, nil
 }
 
-// Close releases queue-local resources.
-// It does NOT close the shared Redis client — the caller who created
-// the client is responsible for closing it.
 func (q *Queue) Close() error {
 	return nil
 }
@@ -91,7 +110,7 @@ func (q *Queue) pushMessage(ctx context.Context, m *core.Message, delaySeconds i
 	} else {
 		m.SetStatus(core.StatusWaiting)
 	}
-	err := q.driver.Push(ctx, m, delaySeconds)
+	err := q.driver.Push(ctx, q.channel, m, delaySeconds, q.messageTTL)
 	if err != nil {
 		q.logger.Warn(ctx, "[Producer:%s] PUSH|error payload:%s delay:%ds error:%v", q.name, m.Payload, delaySeconds, err)
 		return "", err
@@ -105,7 +124,7 @@ func (q *Queue) Info(ctx context.Context) (Info, error) {
 	if q == nil || q.driver == nil {
 		return Info{}, errors.New("queue is nil")
 	}
-	i, err := q.driver.Info(ctx)
+	i, err := q.driver.Info(ctx, q.channel)
 	if err != nil {
 		return Info{}, err
 	}
@@ -116,7 +135,7 @@ func (q *Queue) Reload(ctx context.Context, queueName string) (int, error) {
 	if q == nil || q.driver == nil {
 		return 0, errors.New("queue is nil")
 	}
-	return q.driver.Reload(ctx, queueName)
+	return q.driver.Reload(ctx, q.channel, queueName)
 }
 
 // DeleteMessage deletes a specific message from all queues
@@ -131,7 +150,7 @@ func (q *Queue) DeleteMessage(ctx context.Context, m *core.Message) error {
 		return fmt.Errorf("message id is empty")
 	}
 
-	err := q.driver.Delete(ctx, m)
+	err := q.driver.Delete(ctx, q.channel, m)
 	if err != nil {
 		return fmt.Errorf("delete message: %w", err)
 	}
@@ -143,7 +162,7 @@ func (q *Queue) Flush(ctx context.Context, queueName string) error {
 	if q == nil || q.driver == nil {
 		return errors.New("queue is nil")
 	}
-	return q.driver.Flush(ctx, queueName)
+	return q.driver.Flush(ctx, q.channel, queueName)
 }
 
 func (q *Queue) GetMessage(ctx context.Context, id string) (*core.Message, error) {
@@ -157,7 +176,7 @@ func (q *Queue) GetMessage(ctx context.Context, id string) (*core.Message, error
 	if !ok {
 		return nil, errMessageCapabilityUnsupported
 	}
-	return reader.GetMessage(ctx, id)
+	return reader.GetMessage(ctx, q.channel, id)
 }
 
 func (q *Queue) DeleteByID(ctx context.Context, id string) (bool, error) {
@@ -171,7 +190,7 @@ func (q *Queue) DeleteByID(ctx context.Context, id string) (bool, error) {
 	if !ok {
 		return false, errMessageCapabilityUnsupported
 	}
-	return writer.DeleteMessage(ctx, id)
+	return writer.DeleteMessage(ctx, q.channel, id)
 }
 
 func (q *Queue) RetryByID(ctx context.Context, id string, delaySeconds int) (bool, error) {
@@ -185,5 +204,5 @@ func (q *Queue) RetryByID(ctx context.Context, id string, delaySeconds int) (boo
 	if !ok {
 		return false, errMessageCapabilityUnsupported
 	}
-	return writer.RetryMessage(ctx, id, delaySeconds)
+	return writer.RetryMessage(ctx, q.channel, id, delaySeconds)
 }

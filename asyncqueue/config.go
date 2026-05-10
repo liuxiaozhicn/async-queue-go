@@ -10,9 +10,11 @@ import (
 )
 
 const defaultMessageTTLSeconds = 10 * 24 * 60 * 60
+const defaultQueueDriverName = "redis"
 
 type QueueConfig struct {
 	Name            string `json:"name"             yaml:"name"`
+	Driver          string `json:"driver"           yaml:"driver"`
 	Channel         string `json:"channel"          yaml:"channel"`
 	Enabled         bool   `json:"enabled"          yaml:"enabled"`
 	PopTimeout      int    `json:"pop_timeout"      yaml:"pop_timeout"`
@@ -51,7 +53,10 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 
-	for name, queueCfg := range cfg.Queues {
+	for queueName, queueCfg := range cfg.Queues {
+		if queueCfg.Driver == "" {
+			queueCfg.Driver = defaultQueueDriverName
+		}
 		if queueCfg.PopTimeout <= 0 {
 			queueCfg.PopTimeout = 1
 		}
@@ -76,7 +81,7 @@ func LoadConfig(path string) (*Config, error) {
 		if queueCfg.ShutdownTimeout <= 0 {
 			queueCfg.ShutdownTimeout = 30
 		}
-		cfg.Queues[name] = queueCfg
+		cfg.Queues[queueName] = queueCfg
 	}
 
 	return &cfg, nil

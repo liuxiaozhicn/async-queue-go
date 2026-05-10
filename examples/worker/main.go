@@ -84,12 +84,27 @@ func run(ctx context.Context, args []string) error {
 	defer client.Close()
 
 	// Build driver → consumer → worker
-	driver := queue.NewRedisDriver(client, opts.channel, opts.timeout, opts.handleTimeout, opts.retrySeconds)
+	driver := queue.NewRedisDriver(
+		client,
+	)
 	handler := func(ctx context.Context, m *core.Message) (core.Result, error) {
 		return core.ACK, nil
 	}
 	autoRestart := opts.maxMessages > 0
-	consumer := queue.NewConsumer(driver, queue.HandlerFunc(handler), opts.concurrent, autoRestart, opts.maxMessages, "", 1, opts.handleTimeout, nil)
+	consumer := queue.NewConsumer(
+		driver,
+		opts.channel,
+		queue.HandlerFunc(handler),
+		opts.concurrent,
+		autoRestart,
+		opts.maxMessages,
+		"",
+		1,
+		opts.handleTimeout,
+		nil,
+		queue.WithConsumerPopTimeout(time.Duration(opts.timeout)*time.Second),
+		queue.WithConsumerRetrySeconds(opts.retrySeconds),
+	)
 	w := worker.NewWorker(consumer)
 
 	// Start worker

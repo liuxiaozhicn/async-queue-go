@@ -15,7 +15,7 @@ type LogLevel = logger.LogLevel
 //
 // Example:
 //
-//	asyncqueue.NewServer(cfg, client, asyncqueue.WithLogger(
+//	asyncqueue.NewServer(cfg, asyncqueue.WithLogger(
 //	    logger.Default.LogMode(asyncqueue.Warn),
 //	))
 func WithLogger(l logger.Interface) Option {

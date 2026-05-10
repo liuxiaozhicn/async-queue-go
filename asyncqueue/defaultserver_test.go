@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
-	"github.com/redis/go-redis/v9"
 	"log"
 	"os"
 	"strings"
@@ -31,9 +30,7 @@ func TestDefault_NilBeforeNewServer(t *testing.T) {
 
 func TestDefault_SetDefault(t *testing.T) {
 	resetDefault(t)
-	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
-	defer client.Close()
-	s, err := NewServer(minimalConfig(), client)
+	s, err := NewServer(minimalConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,14 +72,11 @@ func (j *testDefaultJob) GetType() string { return "testDefaultJob" }
 func TestSetDefaultWithWarn_Overwrite(t *testing.T) {
 	resetDefault(t)
 
-	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
-	defer client.Close()
-
-	s1, err := NewServer(minimalConfig(), client)
+	s1, err := NewServer(minimalConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
-	s2, err := NewServer(minimalConfig(), client)
+	s2, err := NewServer(minimalConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,10 +100,8 @@ func TestSetDefaultWithWarn_Overwrite(t *testing.T) {
 
 func TestDefault_NewServerSetsGlobal(t *testing.T) {
 	resetDefault(t)
-	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
-	defer client.Close()
 
-	s, err := NewServer(minimalConfig(), client)
+	s, err := NewServer(minimalConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,10 +112,8 @@ func TestDefault_NewServerSetsGlobal(t *testing.T) {
 
 func TestDefault_NewServerOverwritesGlobal(t *testing.T) {
 	resetDefault(t)
-	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
-	defer client.Close()
-	s1, _ := NewServer(minimalConfig(), client)
-	s2, _ := NewServer(minimalConfig(), client)
+	s1, _ := NewServer(minimalConfig())
+	s2, _ := NewServer(minimalConfig())
 	if DefaultServer() != s2 {
 		t.Fatalf("second NewServer should overwrite global: got %p want %p", DefaultServer(), s2)
 	}

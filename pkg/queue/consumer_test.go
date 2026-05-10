@@ -35,8 +35,9 @@ type fakeDriver struct {
 	inFlight    int32
 }
 
-func (f *fakeDriver) Push(context.Context, *core.Message, int) error { return nil }
-func (f *fakeDriver) Delete(context.Context, *core.Message) error    { return nil }
+func (f *fakeDriver) Ping(context.Context) error                                  { return nil }
+func (f *fakeDriver) Push(context.Context, string, *core.Message, int, int) error { return nil }
+func (f *fakeDriver) Delete(context.Context, string, *core.Message) error         { return nil }
 func (f *fakeDriver) GetByID(context.Context, string) (*core.Message, error) {
 	return nil, nil
 }
@@ -44,14 +45,14 @@ func (f *fakeDriver) DeleteByID(context.Context, string) (bool, error) { return 
 func (f *fakeDriver) RetryByID(context.Context, string, int) (bool, error) {
 	return false, nil
 }
-func (f *fakeDriver) Remove(_ context.Context, _ string) error {
+func (f *fakeDriver) Remove(_ context.Context, _ string, _ string) error {
 	f.mu.Lock()
 	f.removeCalls++
 	err := f.removeErr
 	f.mu.Unlock()
 	return err
 }
-func (f *fakeDriver) Pop(context.Context) (string, *core.Message, error) {
+func (f *fakeDriver) Pop(context.Context, string, time.Duration, time.Duration) (string, *core.Message, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if len(f.popItems) == 0 {
@@ -61,37 +62,37 @@ func (f *fakeDriver) Pop(context.Context) (string, *core.Message, error) {
 	f.popItems = f.popItems[1:]
 	return item.data, item.msg, nil
 }
-func (f *fakeDriver) Ack(context.Context, string) error {
+func (f *fakeDriver) Ack(context.Context, string, string) error {
 	f.mu.Lock()
 	f.ackCalls++
 	err := f.ackErr
 	f.mu.Unlock()
 	return err
 }
-func (f *fakeDriver) Fail(context.Context, string) error {
+func (f *fakeDriver) Fail(context.Context, string, string) error {
 	f.mu.Lock()
 	f.failCalls++
 	err := f.failErr
 	f.mu.Unlock()
 	return err
 }
-func (f *fakeDriver) Requeue(context.Context, string) error {
+func (f *fakeDriver) Requeue(context.Context, string, string) error {
 	f.mu.Lock()
 	f.requeueCalls++
 	err := f.requeueErr
 	f.mu.Unlock()
 	return err
 }
-func (f *fakeDriver) Retry(context.Context, *core.Message) error {
+func (f *fakeDriver) Retry(context.Context, string, *core.Message, []int) error {
 	f.mu.Lock()
 	f.retryCalls++
 	err := f.retryErr
 	f.mu.Unlock()
 	return err
 }
-func (f *fakeDriver) Reload(context.Context, string) (int, error) { return 0, nil }
-func (f *fakeDriver) Flush(context.Context, string) error         { return nil }
-func (f *fakeDriver) Info(context.Context) (Info, error)          { return Info{}, nil }
+func (f *fakeDriver) Reload(context.Context, string, string) (int, error) { return 0, nil }
+func (f *fakeDriver) Flush(context.Context, string, string) error         { return nil }
+func (f *fakeDriver) Info(context.Context, string) (Info, error)          { return Info{}, nil }
 
 func TestConsumerResultRouting(t *testing.T) {
 	mk := func() *core.Message { return core.NewMessage([]byte(`{}`), 2) }
@@ -138,7 +139,7 @@ func TestConsumerResultRouting(t *testing.T) {
 			handler := HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
 				return tc.result, tc.err
 			})
-			c := NewConsumer(d, handler, 1, true, 1, "", 1, 2, logger.Default.LogMode(logger.Silent))
+			c := NewConsumer(d, "test", handler, 1, true, 1, "", 1, 2, logger.Default.LogMode(logger.Silent))
 			if err := c.Run(context.Background()); err != nil {
 				t.Fatal(err)
 			}
@@ -160,7 +161,7 @@ func TestConsumerMaxMessagesAndConcurrency(t *testing.T) {
 		}{data: "x", msg: core.NewMessage([]byte(`{}`), 2)})
 	}
 
-	c := NewConsumer(d, HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
+	c := NewConsumer(d, "test", HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
 		in := atomic.AddInt32(&d.inFlight, 1)
 		for {
 			old := atomic.LoadInt32(&d.maxInFlight)
@@ -195,7 +196,7 @@ func TestConsumerMaxMessagesDisabledIgnoresLimit(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	handled := int32(0)
-	c := NewConsumer(d, HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
+	c := NewConsumer(d, "test", HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
 		if atomic.AddInt32(&handled, 1) >= 3 {
 			cancel()
 		}
@@ -219,7 +220,7 @@ func TestConsumerRunReturnsAggregatedErrors(t *testing.T) {
 		}{data: "x", msg: core.NewMessage([]byte(`{}`), 2)})
 	}
 
-	c := NewConsumer(d, HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
+	c := NewConsumer(d, "test", HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
 		return core.ACK, nil
 	}), 2, true, 3, "", 1, 2, logger.Default.LogMode(logger.Silent))
 
@@ -255,7 +256,7 @@ func TestConsumerHooksAndStats(t *testing.T) {
 	ackN, retryN, requeueN, dropN := 0, 0, 0, 0
 	results := []core.Result{core.ACK, core.RETRY, core.REQUEUE, core.DROP}
 	idx := 0
-	c := NewConsumerWithHooks(d, HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
+	c := NewConsumerWithHooks(d, "test", HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
 		res := results[idx]
 		idx++
 		return res, nil
@@ -298,7 +299,7 @@ func TestConsumerShutdownDrainsInFlight(t *testing.T) {
 	started := make(chan struct{}, 2)
 	release := make(chan struct{})
 	ctx, cancel := context.WithCancel(context.Background())
-	c := NewConsumer(d, HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
+	c := NewConsumer(d, "test", HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
 		started <- struct{}{}
 		<-release
 		return core.ACK, nil

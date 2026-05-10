@@ -10,6 +10,7 @@ import (
 type forwarder struct {
 	driver       MessageForwarder
 	queueName    string
+	channel      string
 	logger       logger.Interface
 	idleInterval time.Duration
 	busyInterval time.Duration
@@ -17,7 +18,7 @@ type forwarder struct {
 
 // NewForwarder creates a background forwarder for scheduled and timeout-recovery flows.
 // Returns nil when the provided driver does not support forwarding capability.
-func NewForwarder(driver Driver, queueName string, l logger.Interface) *forwarder {
+func NewForwarder(driver Driver, queueName string, channel string, l logger.Interface) *forwarder {
 	if driver == nil {
 		return nil
 	}
@@ -31,6 +32,7 @@ func NewForwarder(driver Driver, queueName string, l logger.Interface) *forwarde
 	return &forwarder{
 		driver:       forwarderDriver,
 		queueName:    queueName,
+		channel:      channel,
 		logger:       l,
 		idleInterval: time.Second,
 		busyInterval: time.Second,
@@ -51,7 +53,7 @@ func (f *forwarder) Run(ctx context.Context) error {
 		f.busyInterval = time.Second
 	}
 
-	forwardedDelayed, forwardedTimeout, err := f.driver.ForwardMessages(ctx)
+	forwardedDelayed, forwardedTimeout, err := f.driver.ForwardMessages(ctx, f.channel)
 	if err != nil {
 		if ctx.Err() != nil {
 			f.logger.Info(ctx, "[Forwarder:%s]|shutdown complete", f.queueName)
@@ -79,7 +81,7 @@ func (f *forwarder) Run(ctx context.Context) error {
 			f.logger.Info(ctx, "[Forwarder:%s]|shutdown complete", f.queueName)
 			return nil
 		case <-timer.C:
-			forwardedDelayed, forwardedTimeout, err := f.driver.ForwardMessages(ctx)
+			forwardedDelayed, forwardedTimeout, err := f.driver.ForwardMessages(ctx, f.channel)
 			if err != nil {
 				if ctx.Err() != nil {
 					f.logger.Info(ctx, "[Forwarder:%s]|shutdown complete", f.queueName)

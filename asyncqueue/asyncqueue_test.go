@@ -3,10 +3,11 @@ package asyncqueue
 import (
 	"context"
 	"encoding/json"
+	"testing"
+	"time"
+
 	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
 	"github.com/liuxiaozhicn/async-queue-go/pkg/logger"
-	"testing"
-
 	"github.com/liuxiaozhicn/async-queue-go/pkg/queue"
 	"github.com/redis/go-redis/v9"
 )
@@ -20,12 +21,28 @@ func requireRedis(t *testing.T) {
 	}
 }
 
+func newTestRedisDriver(client *redis.Client, channel string, popTimeout int, handleTimeout int, retrySeconds []int, messageTTL int) queue.Driver {
+	_ = popTimeout
+	_ = handleTimeout
+	_ = retrySeconds
+	_ = messageTTL
+	_ = channel
+	return queue.NewRedisDriver(client)
+}
+
 func TestQueuePushMessageAndInfo(t *testing.T) {
 	requireRedis(t)
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
-	q, err := NewAsyncQueue(client, "{kit-test}", 1, 1, []int{1, 2}, 0, 3, "", logger.Default)
+	q, err := NewAsyncQueue(newTestRedisDriver(client, "{kit-test}", 1, 1, []int{1, 2}, 0), "{kit-test}",
+		WithQueuePopTimeout(1),
+		WithQueueHandleTimeout(1),
+		WithQueueRetrySeconds([]int{1, 2}),
+		WithQueueMessageTTL(0),
+		WithQueueMaxAttempts(3),
+		WithQueueLogger(logger.Default),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,13 +67,72 @@ func TestQueuePushMessageAndInfo(t *testing.T) {
 	}
 }
 
+func TestNewAsyncQueueWithOptions(t *testing.T) {
+	requireRedis(t)
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
+	defer client.Close()
+
+	q, err := NewAsyncQueue(newTestRedisDriver(client, "{kit-options}", 2, 3, []int{2, 4}, 60), "{kit-options}",
+		WithQueuePopTimeout(2),
+		WithQueueHandleTimeout(3),
+		WithQueueRetrySeconds([]int{2, 4}),
+		WithQueueMessageTTL(60),
+		WithQueueMaxAttempts(6),
+		WithQueueName("opt-queue"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if q.PopTimeout != 2*time.Second {
+		t.Fatalf("expected PopTimeout 2s, got %v", q.PopTimeout)
+	}
+	if q.handleTimeout != 3*time.Second {
+		t.Fatalf("expected handleTimeout 3s, got %v", q.handleTimeout)
+	}
+	if q.maxAttempts != 6 {
+		t.Fatalf("expected maxAttempts 6, got %d", q.maxAttempts)
+	}
+	if q.name != "opt-queue" {
+		t.Fatalf("expected name opt-queue, got %s", q.name)
+	}
+}
+
+func TestNewAsyncQueueNilLoggerFallsBackToDefault(t *testing.T) {
+	requireRedis(t)
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
+	defer client.Close()
+
+	q, err := NewAsyncQueue(newTestRedisDriver(client, "{kit-nil-logger}", 1, 1, []int{1}, 0), "{kit-nil-logger}",
+		WithQueuePopTimeout(1),
+		WithQueueHandleTimeout(1),
+		WithQueueRetrySeconds([]int{1}),
+		WithQueueMessageTTL(0),
+		WithQueueMaxAttempts(3),
+		WithQueueLogger(nil),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q.logger == nil {
+		t.Fatal("expected default logger when nil logger is provided")
+	}
+}
+
 func TestWorkerConsumesMessage(t *testing.T) {
 	requireRedis(t)
 
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
-	q, err := NewAsyncQueue(client, "{kit-worker}", 1, 1, []int{1}, 0, 3, "", logger.Default)
+	q, err := NewAsyncQueue(newTestRedisDriver(client, "{kit-worker}", 1, 1, []int{1}, 0), "{kit-worker}",
+		WithQueuePopTimeout(1),
+		WithQueueHandleTimeout(1),
+		WithQueueRetrySeconds([]int{1}),
+		WithQueueMessageTTL(0),
+		WithQueueMaxAttempts(3),
+		WithQueueLogger(logger.Default),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,6 +148,7 @@ func TestWorkerConsumesMessage(t *testing.T) {
 	cfg := &Config{
 		Queues: map[string]QueueConfig{
 			"test": {
+				Driver:        "redis",
 				Channel:       "{kit-worker}",
 				Enabled:       true,
 				Processes:     1,
@@ -88,10 +165,11 @@ func TestWorkerConsumesMessage(t *testing.T) {
 		called++
 		return core.ACK, nil
 	}))
-	manager, err := NewManagerWithRedis(cfg, serveMux, client, nil)
+	manager, err := NewManager(cfg, serveMux, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	manager.RegisterDriver("redis", newTestRedisDriver(client, "{kit-worker}", 1, 1, []int{1}, 0))
 	if err := manager.StartWorker(); err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +186,14 @@ func TestQueuePushJobAndInfo(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
-	q, err := NewAsyncQueue(client, "kit-pushjob", 1, 1, []int{1, 2}, 0, 3, "", logger.Default)
+	q, err := NewAsyncQueue(newTestRedisDriver(client, "kit-pushjob", 1, 1, []int{1, 2}, 0), "kit-pushjob",
+		WithQueuePopTimeout(1),
+		WithQueueHandleTimeout(1),
+		WithQueueRetrySeconds([]int{1, 2}),
+		WithQueueMessageTTL(0),
+		WithQueueMaxAttempts(3),
+		WithQueueLogger(logger.Default),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +235,14 @@ func TestQueuePushJobNilJob(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
-	q, err := NewAsyncQueue(client, "{kit-pushjob-nil}", 1, 1, []int{1}, 0, 3, "", logger.Default)
+	q, err := NewAsyncQueue(newTestRedisDriver(client, "{kit-pushjob-nil}", 1, 1, []int{1}, 0), "{kit-pushjob-nil}",
+		WithQueuePopTimeout(1),
+		WithQueueHandleTimeout(1),
+		WithQueueRetrySeconds([]int{1}),
+		WithQueueMessageTTL(0),
+		WithQueueMaxAttempts(3),
+		WithQueueLogger(logger.Default),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +260,14 @@ func TestWorkerConsumesJobMessage(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
 
-	q, err := NewAsyncQueue(client, "{kit-worker-job}", 1, 1, []int{1}, 0, 3, "", logger.Default)
+	q, err := NewAsyncQueue(newTestRedisDriver(client, "{kit-worker-job}", 1, 1, []int{1}, 0), "{kit-worker-job}",
+		WithQueuePopTimeout(1),
+		WithQueueHandleTimeout(1),
+		WithQueueRetrySeconds([]int{1}),
+		WithQueueMessageTTL(0),
+		WithQueueMaxAttempts(3),
+		WithQueueLogger(logger.Default),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,6 +288,7 @@ func TestWorkerConsumesJobMessage(t *testing.T) {
 	cfg := &Config{
 		Queues: map[string]QueueConfig{
 			"test": {
+				Driver:        "redis",
 				Channel:       "{kit-worker-job}",
 				Enabled:       true,
 				Processes:     1,
@@ -207,10 +307,11 @@ func TestWorkerConsumesJobMessage(t *testing.T) {
 		_ = json.Unmarshal(m.Payload, receivedJob)
 		return core.ACK, nil
 	}))
-	manager, err := NewManagerWithRedis(cfg, serveMux, client, nil)
+	manager, err := NewManager(cfg, serveMux, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	manager.RegisterDriver("redis", newTestRedisDriver(client, "{kit-worker-job}", 1, 1, []int{1}, 0))
 	if err := manager.StartWorker(); err != nil {
 		t.Fatal(err)
 	}

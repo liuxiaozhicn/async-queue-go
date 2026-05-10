@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
 	"github.com/liuxiaozhicn/async-queue-go/pkg/queue"
-	"github.com/redis/go-redis/v9"
 	"os"
 	"path/filepath"
 	"testing"
@@ -23,8 +22,6 @@ type bindTestJob2 struct {
 func (j *bindTestJob2) GetType() string { return "bindTestJob2" }
 
 func TestServerLoadAndLifecycle(t *testing.T) {
-	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
-	defer client.Close()
 	t.Run("load server from config file", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		configFile := filepath.Join(tmpDir, "config.json")
@@ -41,7 +38,7 @@ func TestServerLoadAndLifecycle(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		s, err := LoadServer(configFile, client)
+		s, err := LoadServer(configFile)
 		if err != nil {
 			t.Fatalf("LoadServer failed: %v", err)
 		}
@@ -56,9 +53,8 @@ func TestServerLoadAndLifecycle(t *testing.T) {
 		configData := map[string]any{
 			"queues": map[string]any{
 				"default": map[string]any{
-					"redis_addr": "127.0.0.1:6379",
-					"channel":    "{queue}",
-					"enabled":    false,
+					"channel": "{queue}",
+					"enabled": false,
 				},
 			},
 		}
@@ -67,7 +63,7 @@ func TestServerLoadAndLifecycle(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		s, err := NewServerFromConfig(configFile, client)
+		s, err := NewServerFromConfig(configFile)
 		if err != nil {
 			t.Fatalf("NewServerFromConfig failed: %v", err)
 		}
@@ -77,7 +73,7 @@ func TestServerLoadAndLifecycle(t *testing.T) {
 	})
 
 	t.Run("handle registers handler", func(t *testing.T) {
-		s, err := NewServer(&Config{Queues: map[string]QueueConfig{}}, client)
+		s, err := NewServer(&Config{Queues: map[string]QueueConfig{}})
 		if err != nil {
 			t.Fatalf("NewServer failed: %v", err)
 		}
@@ -95,7 +91,7 @@ func TestServerLoadAndLifecycle(t *testing.T) {
 	})
 
 	t.Run("queue before start returns error", func(t *testing.T) {
-		s, err := NewServer(&Config{Queues: map[string]QueueConfig{}}, client)
+		s, err := NewServer(&Config{Queues: map[string]QueueConfig{}})
 		if err != nil {
 			t.Fatalf("NewServer failed: %v", err)
 		}

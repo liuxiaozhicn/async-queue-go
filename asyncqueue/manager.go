@@ -10,18 +10,17 @@ import (
 	"github.com/liuxiaozhicn/async-queue-go/pkg/logger"
 	iqueue "github.com/liuxiaozhicn/async-queue-go/pkg/queue"
 	iworker "github.com/liuxiaozhicn/async-queue-go/pkg/worker"
-	"github.com/redis/go-redis/v9"
 )
 
 // Manager manages workers for multiple queues.
 type Manager struct {
-	config      *Config
-	serveMux    *ServeMux
-	queues      map[string]*Queue
-	workers     map[string][]*iworker.Worker
-	forwarders  map[string]*iworker.Worker
-	redisClient redis.UniversalClient // Optional external Redis client
-	logger      logger.Interface
+	config     *Config
+	serveMux   *ServeMux
+	queues     map[string]*Queue
+	workers    map[string][]*iworker.Worker
+	forwarders map[string]*iworker.Worker
+	logger     logger.Interface
+	drivers    map[string]iqueue.Driver
 
 	mu     sync.RWMutex
 	ctx    context.Context
@@ -33,8 +32,12 @@ type Manager struct {
 	started bool
 }
 
-// NewManager creates a queue manager.
+// NewManager creates a manager.
 func NewManager(config *Config, serveMux *ServeMux, l logger.Interface) (*Manager, error) {
+	return newManager(config, serveMux, l)
+}
+
+func newManager(config *Config, serveMux *ServeMux, l logger.Interface) (*Manager, error) {
 	if config == nil {
 		return nil, errors.New("config is nil")
 	}
@@ -53,53 +56,43 @@ func NewManager(config *Config, serveMux *ServeMux, l logger.Interface) (*Manage
 		workers:    make(map[string][]*iworker.Worker),
 		forwarders: make(map[string]*iworker.Worker),
 		logger:     l,
+		drivers:    make(map[string]iqueue.Driver),
 		ctx:        ctx,
 		cancel:     cancel,
 	}, nil
 }
 
-// NewManagerWithRedis creates a queue manager with external Redis client.
-func NewManagerWithRedis(config *Config, serveMux *ServeMux, redisClient redis.UniversalClient, l logger.Interface) (*Manager, error) {
-	if config == nil {
-		return nil, errors.New("config is nil")
+// RegisterDriver registers a prepared driver instance by driver name.
+func (m *Manager) RegisterDriver(driverName string, d iqueue.Driver) {
+	if m == nil || driverName == "" || d == nil {
+		return
 	}
-	if serveMux == nil {
-		return nil, errors.New("serveMux is nil")
-	}
-	if redisClient == nil {
-		return nil, errors.New("redis client is nil")
-	}
-	if l == nil {
-		l = logger.Default
-	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.drivers[driverName] = d
+}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	return &Manager{
-		config:      config,
-		serveMux:    serveMux,
-		queues:      make(map[string]*Queue),
-		workers:     make(map[string][]*iworker.Worker),
-		forwarders:  make(map[string]*iworker.Worker),
-		redisClient: redisClient,
-		logger:      l,
-		ctx:         ctx,
-		cancel:      cancel,
-	}, nil
+// RegisterQueueDriver is kept for backward compatibility.
+func (m *Manager) RegisterQueueDriver(queueName string, d iqueue.Driver) {
+	m.RegisterDriver(queueName, d)
 }
 
 func (m *Manager) checkStartWorkerOptions() error {
-	for name, qCfg := range m.config.Queues {
-		if !qCfg.Enabled {
+	for queueName, queueCfg := range m.config.Queues {
+		if !queueCfg.Enabled {
 			continue
 		}
-		if _, ok := m.serveMux.Get(name); !ok {
-			return fmt.Errorf("[Async-Queue-Manager] handler not registered for queue: %s", name)
+		if _, ok := m.serveMux.Get(queueName); !ok {
+			return fmt.Errorf("[Async-Queue-Manager] handler not registered for queue: %s", queueName)
 		}
-	}
-
-	if m.redisClient != nil {
-		if err := m.redisClient.Ping(context.Background()).Err(); err != nil {
-			return fmt.Errorf("[Async-Queue-Manager] redis not reachable: %w", err)
+		if queueCfg.Driver == "" {
+			return fmt.Errorf("[Async-Queue-Manager] driver is empty for queue: %s", queueName)
+		}
+		if _, ok := m.drivers[queueCfg.Driver]; !ok {
+			return fmt.Errorf("[Async-Queue-Manager] driver %q not registered for queue: %s", queueCfg.Driver, queueName)
+		}
+		if m.drivers[queueCfg.Driver] == nil {
+			return fmt.Errorf("[Async-Queue-Manager] driver %q not registered for queue: %s", queueCfg.Driver, queueName)
 		}
 	}
 
@@ -124,27 +117,36 @@ func (m *Manager) StartWorker() error {
 	m.workers = make(map[string][]*iworker.Worker)
 	m.forwarders = make(map[string]*iworker.Worker)
 
-	for name, queueCfg := range m.config.Queues {
+	for queueName, queueCfg := range m.config.Queues {
 		if !queueCfg.Enabled {
 			continue
 		}
 
-		handler, _ := m.serveMux.Get(name)
+		handler, _ := m.serveMux.Get(queueName)
 
 		var queue *Queue
 		var err error
 
-		// Use external Redis client
-		queue, err = NewAsyncQueue(m.redisClient, queueCfg.Channel, queueCfg.PopTimeout, queueCfg.HandleTimeout, queueCfg.RetrySeconds, queueCfg.MessageTTL, queueCfg.MaxAttempts, name, m.logger)
+		queueOpts := []QueueOption{
+			WithQueuePopTimeout(queueCfg.PopTimeout),
+			WithQueueHandleTimeout(queueCfg.HandleTimeout),
+			WithQueueRetrySeconds(queueCfg.RetrySeconds),
+			WithQueueMessageTTL(queueCfg.MessageTTL),
+			WithQueueMaxAttempts(queueCfg.MaxAttempts),
+			WithQueueName(queueName),
+			WithQueueLogger(m.logger),
+		}
+		driver := m.drivers[queueCfg.Driver]
+		queue, err = NewAsyncQueue(driver, queueCfg.Channel, queueOpts...)
 		if err != nil {
 			m.rollbackStartLocked()
-			return fmt.Errorf("[Async-Queue-Manager] create queue %s: %w", name, err)
+			return fmt.Errorf("[Async-Queue-Manager] create queue %s: %w", queueName, err)
 		}
-		m.queues[name] = queue
+		m.queues[queueName] = queue
 
-		if forwarder := iqueue.NewForwarder(queue.driver, name, m.logger); forwarder != nil {
+		if forwarder := iqueue.NewForwarder(driver, queueName, queue.channel, m.logger); forwarder != nil {
 			forwarderWorker := iworker.NewWorker(forwarder)
-			m.forwarders[name] = forwarderWorker
+			m.forwarders[queueName] = forwarderWorker
 			m.wg.Add(1)
 			go func(queueName string, worker *iworker.Worker) {
 				defer m.wg.Done()
@@ -155,21 +157,35 @@ func (m *Manager) StartWorker() error {
 				if err := worker.Wait(); err != nil {
 					m.recordError(queueName, forwarderProcessID, fmt.Errorf("forwarder-wait: %w", err))
 				}
-			}(name, forwarderWorker)
+			}(queueName, forwarderWorker)
 		}
 
 		workers := make([]*iworker.Worker, 0, queueCfg.Processes)
 		for i := 0; i < queueCfg.Processes; i++ {
-			consumer := iqueue.NewConsumer(queue.driver, handler, queueCfg.Concurrent, queueCfg.AutoRestart, queueCfg.MaxMessages, name, i, queueCfg.HandleTimeout, m.logger)
-			workerInstance := iworker.NewWorker(consumer)
+			consumer := iqueue.NewConsumer(
+				driver,
+				queue.channel,
+				handler,
+				queueCfg.Concurrent,
+				queueCfg.AutoRestart,
+				queueCfg.MaxMessages,
+				queueName,
+				i,
+				int(queue.handleTimeout/time.Second),
+				m.logger,
+				iqueue.WithConsumerPopTimeout(queue.PopTimeout),
+				iqueue.WithConsumerRetrySeconds(queue.retrySeconds),
+				iqueue.WithConsumerMessageTTL(queue.messageTTL),
+			)
+			consumerWorker := iworker.NewWorker(consumer)
 
-			workers = append(workers, workerInstance)
+			workers = append(workers, consumerWorker)
 			m.wg.Add(1)
 
 			// Check if auto-restart is enabled for this queue
 			if queueCfg.AutoRestart && queueCfg.MaxMessages > 0 {
 				// Auto-restart mode: restart worker when it exits normally
-				go m.runWorkerWithAutoRestart(name, i, workerInstance, queue, handler, queueCfg)
+				go m.runWorkerWithAutoRestart(queueName, i, consumerWorker, queue, handler, queueCfg)
 			} else {
 				// Normal mode: worker runs continuously until context cancel or error.
 				go func(queueName string, processID int, worker *iworker.Worker) {
@@ -181,11 +197,11 @@ func (m *Manager) StartWorker() error {
 					if err := worker.Wait(); err != nil {
 						m.recordError(queueName, processID, fmt.Errorf("wait: %w", err))
 					}
-				}(name, i, workerInstance)
+				}(queueName, i, consumerWorker)
 			}
 		}
 
-		m.workers[name] = workers
+		m.workers[queueName] = workers
 	}
 
 	m.started = true
@@ -354,7 +370,21 @@ func (m *Manager) runWorkerWithAutoRestart(queueName string, processID int, w *i
 		}
 
 		// Create a new worker instance for restart
-		consumer := iqueue.NewConsumer(q.driver, handler, cfg.Concurrent, cfg.AutoRestart, cfg.MaxMessages, queueName, processID, cfg.HandleTimeout, m.logger)
+		consumer := iqueue.NewConsumer(
+			q.driver,
+			q.channel,
+			handler,
+			cfg.Concurrent,
+			cfg.AutoRestart,
+			cfg.MaxMessages,
+			queueName,
+			processID,
+			int(q.handleTimeout/time.Second),
+			m.logger,
+			iqueue.WithConsumerPopTimeout(q.PopTimeout),
+			iqueue.WithConsumerRetrySeconds(q.retrySeconds),
+			iqueue.WithConsumerMessageTTL(q.messageTTL),
+		)
 		w = iworker.NewWorker(consumer)
 
 		restartCount++
