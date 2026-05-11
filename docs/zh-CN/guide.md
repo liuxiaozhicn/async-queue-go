@@ -105,41 +105,31 @@ flowchart LR
 ## 消息生命周期
 
 ```mermaid
-stateDiagram-v2
-    [*] --> waiting
-    waiting --> reserved: Pop
-    reserved --> acked: ACK
-    reserved --> delayed: RETRY
-    reserved --> waiting: REQUEUE
-    reserved --> failed: 超过最大重试次数
-    reserved --> timeout: 保留超时
-    delayed --> waiting: Forwarder 转发到期消息
-    timeout --> waiting: 手动重装载 timeout 队列
-    failed --> waiting: 手动重装载 failed 队列
-    reserved --> dropped: DROP
+flowchart LR
+    P[Producer] -->|delay = 0| W[waiting]
+    P -->|delay > 0| D[delayed]
+    D -->|Forwarder 转发到期消息| W
+    W -->|Consumer Pop| R[reserved]
 ```
 
-详细流转：
+消费结果分支：
 
 ```mermaid
-flowchart TD
-    P[Producer PushJob / PushMessage] --> Q{是否延迟投递}
-    Q -- 否 --> W[waiting]
-    Q -- 是 --> D[delayed]
-
-    D -->|延迟到期后由 Forwarder 转发| W
-    W -->|Consumer Pop| R[reserved]
-
+flowchart LR
+    R[reserved]
     R -->|Handler 返回 ACK| ACK[done]
     R -->|Handler 返回 DROP| DROP[dropped]
-    R -->|Handler 返回 REQUEUE| W
-    R -->|Handler 返回 RETRY 且仍可重试| D
-    R -->|Handler 返回 RETRY 且重试次数耗尽| F[failed]
-    R -->|Handler 返回 error 或 panic 且仍可重试| D
-    R -->|Handler 返回 error 或 panic 且重试次数耗尽| F
-    R -->|超过 handleTimeout 且 Forwarder 检测到超时保留消息| T[timeout]
+    R -->|Handler 返回 REQUEUE| W[waiting]
+    R -->|RETRY 或 error 且仍可重试| D[delayed]
+    R -->|RETRY 或 error 且重试次数耗尽| F[failed]
+    R -->|超过 handleTimeout| T[timeout]
+```
 
-    T -->|手动重装载 timeout 队列| W
+人工恢复分支：
+
+```mermaid
+flowchart LR
+    T[timeout] -->|手动重装载 timeout 队列| W[waiting]
     F -->|手动重装载 failed 队列| W
 ```
 
@@ -148,8 +138,8 @@ flowchart TD
 - `waiting` 是主消费入口
 - `reserved` 表示消息已被某个 consumer 取走，但还没有提交结果
 - `delayed` 同时承载主动延迟和重试退避
-- `timeout` 不会自动回到 `waiting`
-- `failed` 适合人工检查、补偿或重放
+- `timeout` 和 `failed` 都不会自动回到 `waiting`
+- 手动重装载是显式操作，所以单独拆成一张恢复图
 
 ## Handler 返回值语义
 

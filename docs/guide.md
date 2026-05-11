@@ -105,41 +105,31 @@ flowchart LR
 ## Message Lifecycle
 
 ```mermaid
-stateDiagram-v2
-    [*] --> waiting
-    waiting --> reserved: Pop
-    reserved --> acked: ACK
-    reserved --> delayed: RETRY
-    reserved --> waiting: REQUEUE
-    reserved --> failed: Max attempts exhausted
-    reserved --> timeout: Reservation timeout
-    delayed --> waiting: Forwarder moves due jobs
-    timeout --> waiting: Manual reload timeout queue
-    failed --> waiting: Manual reload failed queue
-    reserved --> dropped: DROP
+flowchart LR
+    P[Producer] -->|delay = 0| W[waiting]
+    P -->|delay > 0| D[delayed]
+    D -->|Forwarder moves due message| W
+    W -->|Consumer Pop| R[reserved]
 ```
 
-Detailed flow:
+Consumer result paths:
 
 ```mermaid
-flowchart TD
-    P[Producer PushJob / PushMessage] --> Q{Delayed publish?}
-    Q -- No --> W[waiting]
-    Q -- Yes --> D[delayed]
-
-    D -->|Delay expires and forwarder moves message| W
-    W -->|Consumer Pop| R[reserved]
-
+flowchart LR
+    R[reserved]
     R -->|Handler returns ACK| ACK[done]
     R -->|Handler returns DROP| DROP[dropped]
-    R -->|Handler returns REQUEUE| W
-    R -->|Handler returns RETRY and attempts remain| D
-    R -->|Handler returns RETRY and attempts exhausted| F[failed]
-    R -->|Handler returns error or panic and attempts remain| D
-    R -->|Handler returns error or panic and attempts exhausted| F
-    R -->|handleTimeout reached and forwarder detects expired reservation| T[timeout]
+    R -->|Handler returns REQUEUE| W[waiting]
+    R -->|RETRY or error and attempts remain| D[delayed]
+    R -->|RETRY or error and attempts exhausted| F[failed]
+    R -->|handleTimeout reached| T[timeout]
+```
 
-    T -->|Manual reload timeout queue| W
+Manual recovery paths:
+
+```mermaid
+flowchart LR
+    T[timeout] -->|Manual reload timeout queue| W[waiting]
     F -->|Manual reload failed queue| W
 ```
 
@@ -148,8 +138,8 @@ Notes:
 - `waiting` is the main consumable queue
 - `reserved` means a consumer has claimed the message but not committed the result yet
 - `delayed` is used for both explicit delay and retry backoff
-- `timeout` does not go back to `waiting` automatically
-- `failed` is intended for inspection, compensation, or replay
+- `timeout` and `failed` do not go back to `waiting` automatically
+- manual reload is an explicit operation, so it is shown separately from the main processing path
 
 ## Handler Result Semantics
 
