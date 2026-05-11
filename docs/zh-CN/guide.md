@@ -114,8 +114,8 @@ stateDiagram-v2
     reserved --> failed: 超过最大重试次数
     reserved --> timeout: 保留超时
     delayed --> waiting: Forwarder 转发到期消息
-    timeout --> waiting: Reload("timeout")
-    failed --> waiting: Reload("failed")
+    timeout --> waiting: 手动重装载 timeout 队列
+    failed --> waiting: 手动重装载 failed 队列
     reserved --> dropped: DROP
 ```
 
@@ -139,8 +139,8 @@ flowchart TD
     R -->|Handler 返回 error 或 panic 且重试次数耗尽| F
     R -->|超过 handleTimeout 且 Forwarder 检测到超时保留消息| T[timeout]
 
-    T -->|手动 Reload('timeout')| W
-    F -->|手动 Reload('failed')| W
+    T -->|手动重装载 timeout 队列| W
+    F -->|手动重装载 failed 队列| W
 ```
 
 说明：

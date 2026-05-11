@@ -114,8 +114,8 @@ stateDiagram-v2
     reserved --> failed: Max attempts exhausted
     reserved --> timeout: Reservation timeout
     delayed --> waiting: Forwarder moves due jobs
-    timeout --> waiting: Reload("timeout")
-    failed --> waiting: Reload("failed")
+    timeout --> waiting: Manual reload timeout queue
+    failed --> waiting: Manual reload failed queue
     reserved --> dropped: DROP
 ```
 
@@ -139,8 +139,8 @@ flowchart TD
     R -->|Handler returns error or panic and attempts exhausted| F
     R -->|handleTimeout reached and forwarder detects expired reservation| T[timeout]
 
-    T -->|Manual Reload('timeout')| W
-    F -->|Manual Reload('failed')| W
+    T -->|Manual reload timeout queue| W
+    F -->|Manual reload failed queue| W
 ```
 
 Notes:
