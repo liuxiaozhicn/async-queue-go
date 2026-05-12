@@ -190,6 +190,8 @@ flowchart LR
 
 ## Message Lifecycle
 
+Delivery result branch:
+
 ```mermaid
 flowchart LR
     P[Producer] -->|delay = 0| W[waiting]
@@ -211,7 +213,7 @@ flowchart LR
     R -->|handleTimeout reached| T[timeout]
 ```
 
-Manual recovery paths:
+Failure or timeout recovery branch:
 
 ```mermaid
 flowchart LR
