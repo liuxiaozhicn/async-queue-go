@@ -62,6 +62,20 @@ server, err := asyncqueue.NewServer(
 )
 ```
 
+Handler binding is required before `Run`:
+
+```go
+serveMux := asyncqueue.NewServeMux()
+orderJobHandler := NewOrderJobHandler()
+serveMux.Handle((&OrderJob{}).GetType(), orderJobHandler)
+
+if err := server.Run(ctx, serveMux); err != nil {
+    return err
+}
+```
+
+If an enabled queue type is not bound in `ServeMux`, worker startup will fail.
+
 
 Use file-loading only when you intentionally manage queue settings from external files.
 
@@ -295,16 +309,16 @@ The `{...}` hash tag keeps keys for one business queue in the same Redis Cluster
 
 ## Queue Management APIs
 
-| Method | Purpose |
-| --- | --- |
-| `PushJob(ctx, job, delaySeconds)` | Publish a structured job |
+| Method                                | Purpose |
+|---------------------------------------| --- |
+| `PushJob(ctx, job, delaySeconds)`     | Publish a structured job |
 | `PushMessage(ctx, msg, delaySeconds)` | Publish a raw message |
-| `Info(ctx)` | Read waiting / reserved / delayed / timeout / failed counts |
-| `GetMessage(ctx, id)` | Fetch message details |
-| `CancelByID(ctx, id)` | Cancel a delayed message before it enters dispatch, and mark it as `canceled` |
-| `RetryByID(ctx, id, delaySeconds)` | Retry a message with a new delay |
-| `Reload(ctx, "timeout"|"failed")` | Move timeout or failed messages back to waiting |
-| `Flush(ctx, queueName)` | Clear one internal queue |
+| `Info(ctx)`                           | Read waiting / reserved / delayed / timeout / failed counts |
+| `GetMessage(ctx, id)`                 | Fetch message details |
+| `CancelByID(ctx, id)`                 | Cancel a delayed message before it enters dispatch, and mark it as `canceled` |
+| `RetryByID(ctx, id, delaySeconds)`    | Retry a message with a new delay |
+| `Reload(ctx, "timeout" or "failed")`  | Move timeout or failed messages back to waiting |
+| `Flush(ctx, queueName)`               | Clear one internal queue |
 
 ## Low-Level Consumer
 

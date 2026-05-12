@@ -36,7 +36,7 @@ go get github.com/liuxiaozhicn/async-queue-go
 | --- | --- | --- |
 | `queue name` | `order` | Business queue name used for config lookup, handler binding, and `server.Queue("order")` |
 | `driver name` | `redis` | Backend registration name used by `WithDriver("redis", driver)` and the `driver` config field |
-| `channel` | `queue:order` | Backend storage namespace; producer and consumer must use the same channel |
+| `channel` | `queue:order` | Logical queue identifier (key prefix) in the driver backend; producer and consumer must use the same channel |
 
 ## Configuration Quick Reference
 
@@ -95,6 +95,9 @@ The primary path is:
 3. After `server.Run(...)` starts, get the queue instance through `server.Queue("order")`
 4. Publish through `Queue.PushJob(...)` or `Queue.PushMessage(...)`
 
+Important: `server.Run(ctx, serveMux)` requires handler binding for every enabled queue type.  
+For example: `serveMux.Handle(orderJob.GetType(), orderJobHandler)`.
+
 Example:
 
 ```go
@@ -105,6 +108,16 @@ server, err := asyncqueue.NewServer(
 if err != nil {
     log.Fatal(err)
 }
+
+serveMux := asyncqueue.NewServeMux()
+orderJobHandler := NewOrderJobHandler()
+serveMux.Handle((&OrderJob{}).GetType(), orderJobHandler)
+
+go func() {
+    if err := server.Run(ctx, serveMux); err != nil {
+        log.Fatal(err)
+    }
+}()
 
 go func() {
     queueInstance, err := server.Queue("order")

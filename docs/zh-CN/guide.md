@@ -62,6 +62,20 @@ server, err := asyncqueue.NewServer(
 )
 ```
 
+`Run` 前必须完成 handler 绑定：
+
+```go
+serveMux := asyncqueue.NewServeMux()
+orderJobHandler := NewOrderJobHandler()
+serveMux.Handle((&OrderJob{}).GetType(), orderJobHandler)
+
+if err := server.Run(ctx, serveMux); err != nil {
+    return err
+}
+```
+
+如果启用队列对应的任务类型没有在 `ServeMux` 绑定，worker 启动会失败。
+
 ## 配置项说明
 
 ### 完整示例
@@ -293,16 +307,16 @@ Redis 驱动会按 `channel` 生成一组 key：
 
 ## 队列管理能力
 
-| 方法 | 说明 |
-| --- | --- |
-| `PushJob(ctx, job, delaySeconds)` | 投递结构化任务 |
+| 方法                                    | 说明 |
+|---------------------------------------| --- |
+| `PushJob(ctx, job, delaySeconds)`     | 投递结构化任务 |
 | `PushMessage(ctx, msg, delaySeconds)` | 投递原始消息 |
-| `Info(ctx)` | 获取 waiting / reserved / delayed / timeout / failed 统计 |
-| `GetMessage(ctx, id)` | 获取消息详情 |
-| `CancelByID(ctx, id)` | 取消仍处于 `delayed`、尚未进入调度阶段的消息，并把状态标记为 `canceled` |
-| `RetryByID(ctx, id, delaySeconds)` | 重新设定延迟后重试 |
-| `Reload(ctx, "timeout"|"failed")` | 把 timeout 或 failed 消息重新放回 waiting |
-| `Flush(ctx, queueName)` | 清空一个内部队列 |
+| `Info(ctx)`                           | 获取 waiting / reserved / delayed / timeout / failed 统计 |
+| `GetMessage(ctx, id)`                 | 获取消息详情 |
+| `CancelByID(ctx, id)`                 | 取消仍处于 `delayed`、尚未进入调度阶段的消息，并把状态标记为 `canceled` |
+| `RetryByID(ctx, id, delaySeconds)`    | 重新设定延迟后重试 |
+| `Reload(ctx, "timeout" OR "failed")`  | 把 timeout 或 failed 消息重新放回 waiting |
+| `Flush(ctx, queueName)`               | 清空一个内部队列 |
 
 ## 低层 Consumer 用法
 

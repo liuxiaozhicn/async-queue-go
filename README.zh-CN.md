@@ -36,7 +36,7 @@ go get github.com/liuxiaozhicn/async-queue-go
 | --- | --- | --- |
 | `queue name` | `order` | 业务队列名，用于配置项 key、handler 注册和 `server.Queue("order")` |
 | `driver name` | `redis` | 后端驱动注册名，用于 `WithDriver("redis", driver)` 和配置中的 `driver` 字段 |
-| `channel` | `queue:order` | 后端存储命名空间；生产端和消费端必须一致 |
+| `channel` | `queue:order` | 队列在驱动中的逻辑队列标识（key 前缀）；生产端和消费端必须一致 |
 
 ## 配置快速说明
 
@@ -93,7 +93,10 @@ cfg := &asyncqueue.Config{
 1. 启动 `Server`
 2. 通过 `ServeMux` 注册 handler
 3. `server.Run(...)` 启动后，通过 `server.Queue("order")` 获取队列实例
-4. 使用 `Queue.PushJob(...)` 或 `Queue.PushMessage(...)` 投递
+4. 使用 `Queue.PushJob(...)` 投递
+
+重点：`server.Run(ctx, serveMux)` 依赖 `ServeMux` 完整绑定已启用队列的任务类型。  
+示例：`serveMux.Handle(orderJob.GetType(), orderJobHandler)`。
 
 示例：
 
@@ -105,6 +108,16 @@ server, err := asyncqueue.NewServer(
 if err != nil {
     log.Fatal(err)
 }
+
+serveMux := asyncqueue.NewServeMux()
+orderJobHandler := NewOrderJobHandler()
+serveMux.Handle((&OrderJob{}).GetType(), orderJobHandler)
+
+go func() {
+    if err := server.Run(ctx, serveMux); err != nil {
+        log.Fatal(err)
+    }
+}()
 
 go func() {
     queueInstance, err := server.Queue("order")
