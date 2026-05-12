@@ -123,45 +123,43 @@ func (d *RedisDriver) Push(ctx context.Context, channel string, m *core.Message,
 	return nil
 }
 
-func (d *RedisDriver) Delete(ctx context.Context, channel string, m *core.Message) error {
-	if m == nil {
-		return errors.New("message is nil")
-	}
-	if m.ID == "" {
-		return errors.New("message id is empty")
-	}
-	_, err := d.DeleteMessage(ctx, channel, m.ID)
-	return err
-}
-
-func (d *RedisDriver) GetMessage(ctx context.Context, channel string, id string) (*core.Message, error) {
+func (d *RedisDriver) Get(ctx context.Context, channel string, id string) (*core.Message, error) {
 	if id == "" {
 		return nil, errors.New("id is empty")
 	}
 	return d.loadMessage(ctx, channel, id)
 }
 
-func (d *RedisDriver) DeleteMessage(ctx context.Context, channel string, id string) (bool, error) {
+func (d *RedisDriver) Cancel(ctx context.Context, channel string, id string) (bool, error) {
 	if id == "" {
 		return false, errors.New("id is empty")
 	}
 	keys := d.getKeys(channel)
-	res, err := deleteByIDScript.Run(
+	res, err := cancelByIDScript.Run(
 		ctx,
 		d.client,
-		[]string{
-			keys.Waiting, keys.Reserved, keys.Delayed,
-			keys.Timeout, keys.Failed, keys.Message(id),
-		},
-		id,
+		[]string{keys.Waiting, keys.Reserved, keys.Delayed, keys.Message(id)},
+		id, d.clock.Now().Unix(),
 	).Result()
 	if err != nil {
 		return false, err
 	}
-	return asBoolResult(res), nil
+	code := asIntResult(res)
+	switch code {
+	case 1:
+		return true, nil
+	case 0:
+		return false, nil
+	case -1:
+		return false, ErrMessageAlreadyReadyForDispatch
+	case -2:
+		return false, ErrMessageAlreadyInExecution
+	default:
+		return false, fmt.Errorf("queue: unexpected cancel script result: %d", code)
+	}
 }
 
-func (d *RedisDriver) RetryMessage(ctx context.Context, channel string, id string, delaySeconds int) (bool, error) {
+func (d *RedisDriver) Retry(ctx context.Context, channel string, id string, delaySeconds int) (bool, error) {
 	if id == "" {
 		return false, errors.New("id is empty")
 	}
@@ -173,7 +171,11 @@ func (d *RedisDriver) RetryMessage(ctx context.Context, channel string, id strin
 		}
 		return false, err
 	}
-	msg.SetStatus(core.StatusDelayed)
+	if delaySeconds <= 0 {
+		msg.SetStatus(core.StatusWaiting)
+	} else {
+		msg.SetStatus(core.StatusDelayed)
+	}
 	if msg.Attempts < msg.MaxAttempts {
 		msg.Attempts++
 	}
@@ -182,6 +184,10 @@ func (d *RedisDriver) RetryMessage(ctx context.Context, channel string, id strin
 		return false, err
 	}
 	score := d.clock.Now().Unix() + int64(delaySeconds)
+	mode := "delayed"
+	if delaySeconds <= 0 {
+		mode = "waiting"
+	}
 	res, err := retryByIDScript.Run(
 		ctx,
 		d.client,
@@ -189,7 +195,7 @@ func (d *RedisDriver) RetryMessage(ctx context.Context, channel string, id strin
 			keys.Waiting, keys.Reserved, keys.Delayed,
 			keys.Timeout, keys.Failed, keys.Message(id),
 		},
-		id, score, raw,
+		id, score, raw, mode,
 	).Result()
 	if err != nil {
 		return false, err
@@ -212,11 +218,11 @@ func (d *RedisDriver) ForwardMessages(ctx context.Context, channel string) (forw
 		return 0, 0, err
 	}
 
-	forwardedTimeout, err = moveScript.Run(
+	forwardedTimeout, err = moveTimeoutScript.Run(
 		ctx,
 		d.client,
 		[]string{keys.Reserved, keys.Timeout, keys.MessagePrefix},
-		now, string(core.StatusTimeout),
+		now,
 	).Int64()
 	if err != nil {
 		return forwardedDelayed, 0, err
@@ -264,17 +270,12 @@ func (d *RedisDriver) Pop(ctx context.Context, channel string, popTimeout time.D
 	msg, err := d.loadMessage(ctx, channel, id)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			_ = d.Remove(ctx, channel, id)
+			_ = d.client.ZRem(ctx, keys.Reserved, id).Err()
 			return "", nil, nil
 		}
 		return "", nil, err
 	}
 	return id, msg, nil
-}
-
-func (d *RedisDriver) Remove(ctx context.Context, channel string, messageID string) error {
-	keys := d.getKeys(channel)
-	return d.client.ZRem(ctx, keys.Reserved, messageID).Err()
 }
 
 func (d *RedisDriver) Ack(ctx context.Context, channel string, messageID string) error {
@@ -299,6 +300,17 @@ func (d *RedisDriver) Fail(ctx context.Context, channel string, messageID string
 	return err
 }
 
+func (d *RedisDriver) Drop(ctx context.Context, channel string, messageID string) error {
+	keys := d.getKeys(channel)
+	_, err := dropScript.Run(
+		ctx,
+		d.client,
+		[]string{keys.Reserved, keys.Message(messageID)},
+		messageID, d.clock.Now().Unix(),
+	).Result()
+	return err
+}
+
 func (d *RedisDriver) Requeue(ctx context.Context, channel string, messageID string) error {
 	keys := d.getKeys(channel)
 	_, err := requeueScript.Run(
@@ -310,38 +322,19 @@ func (d *RedisDriver) Requeue(ctx context.Context, channel string, messageID str
 	return err
 }
 
-func (d *RedisDriver) Retry(ctx context.Context, channel string, m *core.Message, retrySeconds []int) error {
-	if m == nil {
-		return errors.New("message is nil")
-	}
-	if m.ID == "" {
-		return errors.New("message id is empty")
-	}
-	keys := d.getKeys(channel)
-	m.SetStatus(core.StatusDelayed)
-	raw, err := m.Encode()
-	if err != nil {
-		return err
-	}
-	score := d.clock.Now().Unix() + int64(core.RetrySeconds(retrySeconds, m.Attempts))
-	_, err = retryScript.Run(
-		ctx,
-		d.client,
-		[]string{keys.Reserved, keys.Delayed, keys.Message(m.ID)},
-		m.ID, score, raw,
-	).Result()
-	return err
-}
-
 func (d *RedisDriver) Reload(ctx context.Context, channel string, queue string) (int, error) {
 	keys := d.getKeys(channel)
 	source := keys.Failed
+	skipStale := "0"
 	if queue != "" {
 		if queue != "timeout" && queue != "failed" {
 			return 0, fmt.Errorf("queue %s is not supported", queue)
 		}
 		k, _ := keys.Get(queue)
 		source = k
+		if queue == "timeout" {
+			skipStale = "1"
+		}
 	}
 
 	total := 0
@@ -350,7 +343,7 @@ func (d *RedisDriver) Reload(ctx context.Context, channel string, queue string) 
 			ctx,
 			d.client,
 			[]string{source, keys.Waiting, keys.MessagePrefix},
-			d.clock.Now().Unix(),
+			d.clock.Now().Unix(), skipStale,
 		).Result()
 		if err != nil {
 			return total, err
@@ -399,18 +392,6 @@ func (d *RedisDriver) Info(ctx context.Context, channel string) (Info, error) {
 		return Info{}, err
 	}
 	return Info{Waiting: waiting, Reserved: reserved, Delayed: delayed, Timeout: timeout, Failed: failed}, nil
-}
-
-func (d *RedisDriver) storeMessage(ctx context.Context, channel string, m *core.Message) error {
-	if m == nil || m.ID == "" {
-		return errors.New("invalid message")
-	}
-	keys := d.getKeys(channel)
-	raw, err := m.Encode()
-	if err != nil {
-		return err
-	}
-	return d.client.Set(ctx, keys.Message(m.ID), raw, 0).Err()
 }
 
 func (d *RedisDriver) loadMessage(ctx context.Context, channel string, id string) (*core.Message, error) {

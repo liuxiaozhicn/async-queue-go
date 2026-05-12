@@ -19,15 +19,16 @@ type fakeDriver struct {
 		data string
 		msg  *core.Message
 	}
-	removeCalls  int
 	ackCalls     int
 	failCalls    int
+	dropCalls    int
 	retryCalls   int
 	requeueCalls int
+	lastDelay    int
 
-	removeErr  error
 	ackErr     error
 	failErr    error
+	dropErr    error
 	retryErr   error
 	requeueErr error
 
@@ -37,21 +38,10 @@ type fakeDriver struct {
 
 func (f *fakeDriver) Ping(context.Context) error                                  { return nil }
 func (f *fakeDriver) Push(context.Context, string, *core.Message, int, int) error { return nil }
-func (f *fakeDriver) Delete(context.Context, string, *core.Message) error         { return nil }
-func (f *fakeDriver) GetByID(context.Context, string) (*core.Message, error) {
+func (f *fakeDriver) Get(context.Context, string, string) (*core.Message, error) {
 	return nil, nil
 }
-func (f *fakeDriver) DeleteByID(context.Context, string) (bool, error) { return false, nil }
-func (f *fakeDriver) RetryByID(context.Context, string, int) (bool, error) {
-	return false, nil
-}
-func (f *fakeDriver) Remove(_ context.Context, _ string, _ string) error {
-	f.mu.Lock()
-	f.removeCalls++
-	err := f.removeErr
-	f.mu.Unlock()
-	return err
-}
+func (f *fakeDriver) Cancel(context.Context, string, string) (bool, error) { return false, nil }
 func (f *fakeDriver) Pop(context.Context, string, time.Duration, time.Duration) (string, *core.Message, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -76,6 +66,13 @@ func (f *fakeDriver) Fail(context.Context, string, string) error {
 	f.mu.Unlock()
 	return err
 }
+func (f *fakeDriver) Drop(context.Context, string, string) error {
+	f.mu.Lock()
+	f.dropCalls++
+	err := f.dropErr
+	f.mu.Unlock()
+	return err
+}
 func (f *fakeDriver) Requeue(context.Context, string, string) error {
 	f.mu.Lock()
 	f.requeueCalls++
@@ -83,12 +80,16 @@ func (f *fakeDriver) Requeue(context.Context, string, string) error {
 	f.mu.Unlock()
 	return err
 }
-func (f *fakeDriver) Retry(context.Context, string, *core.Message, []int) error {
+func (f *fakeDriver) Retry(_ context.Context, _ string, _ string, delaySeconds int) (bool, error) {
 	f.mu.Lock()
 	f.retryCalls++
+	f.lastDelay = delaySeconds
 	err := f.retryErr
 	f.mu.Unlock()
-	return err
+	return err == nil, err
+}
+func (f *fakeDriver) ForwardMessages(context.Context, string) (int64, int64, error) {
+	return 0, 0, nil
 }
 func (f *fakeDriver) Reload(context.Context, string, string) (int, error) { return 0, nil }
 func (f *fakeDriver) Flush(context.Context, string, string) error         { return nil }
@@ -100,8 +101,8 @@ func TestConsumerResultRouting(t *testing.T) {
 		name         string
 		result       core.Result
 		err          error
-		wantRemove   int
 		wantAck      int
+		wantDrop     int
 		wantRetry    int
 		wantRequeue  int
 		wantFail     int
@@ -110,16 +111,16 @@ func TestConsumerResultRouting(t *testing.T) {
 	}{
 		// ACK: driver.Ack (which internally calls Remove)
 		{name: "ack", result: core.ACK, wantAck: 1},
-		// DROP: driver.Remove
-		{name: "drop", result: core.DROP, wantRemove: 1},
-		// REQUEUE: driver.Remove + Requeue
-		{name: "requeue", result: core.REQUEUE, wantRemove: 1, wantRequeue: 1},
-		// RETRY with attempts remaining: driver.Remove + Retry
-		{name: "retry", result: core.RETRY, wantRemove: 1, wantRetry: 1},
-		// RETRY with attempts exhausted: driver.Remove + Fail
-		{name: "retry over max", result: core.RETRY, wantRemove: 1, wantFail: 1, maxAttempts: 1, initialTries: 1},
-		// Error with attempts remaining: driver.Remove + Retry
-		{name: "error retry", err: errors.New("boom"), wantRemove: 1, wantRetry: 1},
+		// DROP: driver.Drop
+		{name: "drop", result: core.DROP, wantDrop: 1},
+		// REQUEUE: driver.Requeue (script handles reserved removal)
+		{name: "requeue", result: core.REQUEUE, wantRequeue: 1},
+		// RETRY with attempts remaining: driver.Retry (script handles reserved removal)
+		{name: "retry", result: core.RETRY, wantRetry: 1},
+		// RETRY with attempts exhausted: driver.Fail
+		{name: "retry over max", result: core.RETRY, wantFail: 1, maxAttempts: 1, initialTries: 1},
+		// Error with attempts remaining: driver.Retry
+		{name: "error retry", err: errors.New("boom"), wantRetry: 1},
 		// Error with attempts exhausted: driver.Fail (Fail internally calls Remove)
 		{name: "error fail", err: errors.New("boom"), wantFail: 1, maxAttempts: 1, initialTries: 1},
 	}
@@ -154,9 +155,9 @@ func TestConsumerResultRouting(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if d.removeCalls != tc.wantRemove || d.ackCalls != tc.wantAck || d.retryCalls != tc.wantRetry || d.requeueCalls != tc.wantRequeue || d.failCalls != tc.wantFail {
-				t.Fatalf("got remove=%d ack=%d retry=%d requeue=%d fail=%d",
-					d.removeCalls, d.ackCalls, d.retryCalls, d.requeueCalls, d.failCalls)
+			if d.ackCalls != tc.wantAck || d.dropCalls != tc.wantDrop || d.retryCalls != tc.wantRetry || d.requeueCalls != tc.wantRequeue || d.failCalls != tc.wantFail {
+				t.Fatalf("got ack=%d drop=%d retry=%d requeue=%d fail=%d",
+					d.ackCalls, d.dropCalls, d.retryCalls, d.requeueCalls, d.failCalls)
 			}
 		})
 	}
@@ -323,6 +324,66 @@ func TestConsumerHooksAndStats(t *testing.T) {
 	// Acked=1 (only ACK), Retried=1, Requeued=1, Dropped=1
 	if stats.Acked != 1 || stats.Retried != 1 || stats.Requeued != 1 || stats.Dropped != 1 {
 		t.Fatalf("unexpected stats: %+v", stats)
+	}
+}
+
+func TestConsumerRetryStatusSyncByDelay(t *testing.T) {
+	tests := []struct {
+		name          string
+		retrySeconds  []int
+		expectStatus  core.MessageStatus
+		expectedDelay int
+	}{
+		{
+			name:          "retry zero delay -> waiting",
+			retrySeconds:  []int{0},
+			expectStatus:  core.StatusWaiting,
+			expectedDelay: 0,
+		},
+		{
+			name:          "retry positive delay -> delayed",
+			retrySeconds:  []int{5},
+			expectStatus:  core.StatusDelayed,
+			expectedDelay: 5,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := core.NewMessage([]byte(`{}`), 2)
+			d := &fakeDriver{popItems: []struct {
+				data string
+				msg  *core.Message
+			}{{data: "x", msg: msg}}}
+
+			var hookStatus core.MessageStatus
+			c := NewConsumer(d, "test", HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
+				return core.RETRY, nil
+			}),
+				WithConsumerRetrySeconds(tc.retrySeconds),
+				WithConsumerHooks(ConsumerHooks{
+					OnRetry: func(_ context.Context, m *core.Message) {
+						hookStatus = m.Status
+					},
+				}),
+				WithConsumerConcurrentLimit(1),
+				WithConsumerAutoRestart(true),
+				WithConsumerMaxMessages(1),
+				WithConsumerProcessID(1),
+				WithConsumerHandleTimeout(2*time.Second),
+				WithConsumerLogger(logger.Default.LogMode(logger.Silent)),
+			)
+
+			if err := c.Run(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if d.lastDelay != tc.expectedDelay {
+				t.Fatalf("expected retry delay=%d, got %d", tc.expectedDelay, d.lastDelay)
+			}
+			if hookStatus != tc.expectStatus {
+				t.Fatalf("expected retry hook status=%s, got %s", tc.expectStatus, hookStatus)
+			}
+		})
 	}
 }
 

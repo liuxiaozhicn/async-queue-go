@@ -32,8 +32,6 @@ type Queue struct {
 	logger        logger.Interface
 }
 
-var errMessageCapabilityUnsupported = errors.New("driver does not support message management capability")
-
 // NewAsyncQueue creates a new async queue with a driver.
 func NewAsyncQueue(driver queue.Driver, channel string, opts ...QueueOption) (*Queue, error) {
 	if driver == nil {
@@ -138,26 +136,6 @@ func (q *Queue) Reload(ctx context.Context, queueName string) (int, error) {
 	return q.driver.Reload(ctx, q.channel, queueName)
 }
 
-// DeleteMessage deletes a specific message from all queues
-func (q *Queue) DeleteMessage(ctx context.Context, m *core.Message) error {
-	if q == nil || q.driver == nil {
-		return errors.New("queue is nil")
-	}
-	if m == nil {
-		return fmt.Errorf("message must not be nil")
-	}
-	if m.ID == "" {
-		return fmt.Errorf("message id is empty")
-	}
-
-	err := q.driver.Delete(ctx, q.channel, m)
-	if err != nil {
-		return fmt.Errorf("delete message: %w", err)
-	}
-
-	return nil
-}
-
 func (q *Queue) Flush(ctx context.Context, queueName string) error {
 	if q == nil || q.driver == nil {
 		return errors.New("queue is nil")
@@ -172,37 +150,15 @@ func (q *Queue) GetMessage(ctx context.Context, id string) (*core.Message, error
 	if id == "" {
 		return nil, errors.New("id is empty")
 	}
-	reader, ok := q.driver.(queue.MessageReader)
-	if !ok {
-		return nil, errMessageCapabilityUnsupported
-	}
-	return reader.GetMessage(ctx, q.channel, id)
+	return q.driver.Get(ctx, q.channel, id)
 }
 
-func (q *Queue) DeleteByID(ctx context.Context, id string) (bool, error) {
+func (q *Queue) CancelByID(ctx context.Context, id string) (bool, error) {
 	if q == nil || q.driver == nil {
 		return false, errors.New("queue is nil")
 	}
 	if id == "" {
 		return false, errors.New("id is empty")
 	}
-	writer, ok := q.driver.(queue.MessageWriter)
-	if !ok {
-		return false, errMessageCapabilityUnsupported
-	}
-	return writer.DeleteMessage(ctx, q.channel, id)
-}
-
-func (q *Queue) RetryByID(ctx context.Context, id string, delaySeconds int) (bool, error) {
-	if q == nil || q.driver == nil {
-		return false, errors.New("queue is nil")
-	}
-	if id == "" {
-		return false, errors.New("id is empty")
-	}
-	writer, ok := q.driver.(queue.MessageWriter)
-	if !ok {
-		return false, errMessageCapabilityUnsupported
-	}
-	return writer.RetryMessage(ctx, q.channel, id, delaySeconds)
+	return q.driver.Cancel(ctx, q.channel, id)
 }

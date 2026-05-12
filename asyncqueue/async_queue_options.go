@@ -19,9 +19,9 @@ type asyncQueueOptions struct {
 func defaultQueueOptions(channel string) asyncQueueOptions {
 	return asyncQueueOptions{
 		popTimeout:    1,
-		handleTimeout: 10,
-		retrySeconds:  []int{5},
-		messageTTL:    86400 * 30,
+		handleTimeout: 180,
+		retrySeconds:  []int{30, 90, 300},
+		messageTTL:    defaultMessageTTLSeconds,
 		maxAttempts:   3,
 		name:          channel,
 		logger:        logger.Default,

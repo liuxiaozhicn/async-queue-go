@@ -235,12 +235,10 @@ func (c *Consumer) handleOne(ctx context.Context, messageID string, message *cor
 
 	switch result {
 	case core.REQUEUE:
-		if err := c.driver.Remove(atomicCtx, c.channel, messageID); err != nil {
-			return err
-		}
 		if err := c.driver.Requeue(atomicCtx, c.channel, messageID); err != nil {
 			return err
 		}
+		message.SetStatus(core.StatusWaiting)
 		atomic.AddInt64(&c.requeued, 1)
 		c.logger.Info(ctx, "[Consumer:%s-%d] REQ|ID:%s payload:%s attempts:%d/%d status:%s nextAttempt:%d",
 			c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, message.Status, message.Attempts+1)
@@ -250,16 +248,25 @@ func (c *Consumer) handleOne(ctx context.Context, messageID string, message *cor
 		return nil
 
 	case core.RETRY:
-		if err := c.driver.Remove(atomicCtx, c.channel, messageID); err != nil {
-			return err
-		}
-		if message.AttemptsAllowed() {
-			if err := c.driver.Retry(atomicCtx, c.channel, message, c.retrySeconds); err != nil {
+		if message.MaxAttempts > message.Attempts {
+			nextAttempt := message.Attempts + 1
+			delaySeconds := core.RetrySeconds(c.retrySeconds, message.Attempts)
+			ok, err := c.driver.Retry(atomicCtx, c.channel, messageID, delaySeconds)
+			if err != nil {
 				return err
+			}
+			if !ok {
+				return fmt.Errorf("retry target message not found: %s", messageID)
+			}
+			message.Attempts = nextAttempt
+			if delaySeconds <= 0 {
+				message.SetStatus(core.StatusWaiting)
+			} else {
+				message.SetStatus(core.StatusDelayed)
 			}
 			atomic.AddInt64(&c.retried, 1)
 			c.logger.Info(ctx, "[Consumer:%s-%d] RETRY|ID:%s payload:%s attempts:%d/%d status:%s nextAttempt:%d",
-				c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, message.Status, message.Attempts+1)
+				c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, message.Status, nextAttempt)
 			if c.hooks.OnRetry != nil {
 				c.hooks.OnRetry(atomicCtx, message)
 			}
@@ -268,6 +275,7 @@ func (c *Consumer) handleOne(ctx context.Context, messageID string, message *cor
 			if err := c.driver.Fail(atomicCtx, c.channel, messageID); err != nil {
 				return err
 			}
+			message.SetStatus(core.StatusFailed)
 			atomic.AddInt64(&c.failed, 1)
 			c.logger.Info(ctx, "[Consumer:%s-%d] RETRY|ID:%s payload:%s attempts:%d/%d status:%s moveTo=failed",
 				c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, message.Status)
@@ -278,9 +286,10 @@ func (c *Consumer) handleOne(ctx context.Context, messageID string, message *cor
 		return nil
 
 	case core.DROP:
-		if err := c.driver.Remove(atomicCtx, c.channel, messageID); err != nil {
+		if err := c.driver.Drop(atomicCtx, c.channel, messageID); err != nil {
 			return err
 		}
+		message.SetStatus(core.StatusDropped)
 		atomic.AddInt64(&c.dropped, 1)
 		c.logger.Info(ctx, "[Consumer:%s-%d] DROP|ID:%s payload:%s attempts:%d/%d status:%s",
 			c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, message.Status)
@@ -298,16 +307,24 @@ func (c *Consumer) handleOne(ctx context.Context, messageID string, message *cor
 
 // handleError processes a handler that returned an error: retry if attempts to remain, otherwise fail.
 func (c *Consumer) handleError(ctx context.Context, messageID string, message *core.Message) error {
-	if message.AttemptsAllowed() {
-		if err := c.driver.Remove(ctx, c.channel, messageID); err != nil {
+	if message.MaxAttempts > message.Attempts {
+		delaySeconds := core.RetrySeconds(c.retrySeconds, message.Attempts)
+		ok, err := c.driver.Retry(ctx, c.channel, messageID, delaySeconds)
+		if err != nil {
 			return err
 		}
-		if err := c.driver.Retry(ctx, c.channel, message, c.retrySeconds); err != nil {
-			return err
+		if !ok {
+			return fmt.Errorf("retry target message not found: %s", messageID)
+		}
+		message.Attempts = message.Attempts + 1
+		if delaySeconds <= 0 {
+			message.SetStatus(core.StatusWaiting)
+		} else {
+			message.SetStatus(core.StatusDelayed)
 		}
 		atomic.AddInt64(&c.retried, 1)
-		c.logger.Info(ctx, "[Consumer:%s-%d:handleError] RETRY|ID:%s payload:%s attempts:%d/%d status:%s nextAttempt:%d",
-			c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, message.Status, message.Attempts+1)
+		c.logger.Info(ctx, "[Consumer:%s-%d:handleError] RETRY|ID:%s payload:%s attempts:%d/%d status:%s ",
+			c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, message.Status)
 		if c.hooks.OnRetry != nil {
 			c.hooks.OnRetry(ctx, message)
 		}
@@ -317,6 +334,7 @@ func (c *Consumer) handleError(ctx context.Context, messageID string, message *c
 	if err := c.driver.Fail(ctx, c.channel, messageID); err != nil {
 		return err
 	}
+	message.SetStatus(core.StatusFailed)
 	atomic.AddInt64(&c.failed, 1)
 	c.logger.Info(ctx, "[Consumer:%s-%d:handleError] FAILED|ID:%s payload:%s attempts:%d/%d status:%s",
 		c.name, c.processID, messageID, message.Payload, message.Attempts, message.MaxAttempts, message.Status)
@@ -334,12 +352,10 @@ func (c *Consumer) ackAndHook(ctx context.Context, messageID string, message *co
 	}
 
 	logMessage := message
-	if reader, ok := c.driver.(MessageReader); ok {
-		latestMessage, err := reader.GetMessage(ctx, c.channel, messageID)
-		if err == nil && latestMessage != nil {
-			*message = *latestMessage
-			logMessage = message
-		}
+	latestMessage, err := c.driver.Get(ctx, c.channel, messageID)
+	if err == nil && latestMessage != nil {
+		*message = *latestMessage
+		logMessage = message
 	}
 
 	atomic.AddInt64(&c.acked, 1)

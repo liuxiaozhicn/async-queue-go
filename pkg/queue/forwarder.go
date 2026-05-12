@@ -8,7 +8,7 @@ import (
 )
 
 type forwarder struct {
-	driver       MessageForwarder
+	driver       Driver
 	queueName    string
 	channel      string
 	logger       logger.Interface
@@ -17,20 +17,15 @@ type forwarder struct {
 }
 
 // NewForwarder creates a background forwarder for scheduled and timeout-recovery flows.
-// Returns nil when the provided driver does not support forwarding capability.
 func NewForwarder(driver Driver, queueName string, channel string, l logger.Interface) *forwarder {
 	if driver == nil {
-		return nil
-	}
-	forwarderDriver, ok := driver.(MessageForwarder)
-	if !ok {
 		return nil
 	}
 	if l == nil {
 		l = logger.Default
 	}
 	return &forwarder{
-		driver:       forwarderDriver,
+		driver:       driver,
 		queueName:    queueName,
 		channel:      channel,
 		logger:       l,

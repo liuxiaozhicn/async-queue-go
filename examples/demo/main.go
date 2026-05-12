@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/liuxiaozhicn/async-queue-go/asyncqueue"
 	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
@@ -10,8 +11,11 @@ import (
 	"github.com/redis/go-redis/v9"
 	"log"
 	"math/rand"
+	"os"
 	"os/signal"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -26,15 +30,68 @@ type OrderJob struct {
 func (j *OrderJob) GetType() string { return "order" }
 
 // OrderJobHandler handles order creation.
-type OrderJobHandler struct{}
+type OrderJobHandler struct {
+	mode demoResultMode
+	seq  atomic.Uint64
+}
+
+type demoResultMode string
+
+const (
+	modeAck     demoResultMode = "ack"
+	modeRetry   demoResultMode = "retry"
+	modeRequeue demoResultMode = "requeue"
+	modeDrop    demoResultMode = "drop"
+	modeError   demoResultMode = "error"
+	modeMixed   demoResultMode = "mixed"
+)
+
+func parseDemoResultMode(v string) demoResultMode {
+	switch demoResultMode(strings.ToLower(strings.TrimSpace(v))) {
+	case modeAck, modeRetry, modeRequeue, modeDrop, modeError, modeMixed:
+		return demoResultMode(strings.ToLower(strings.TrimSpace(v)))
+	default:
+		return modeMixed
+	}
+}
+
+func (h *OrderJobHandler) nextResult() (core.Result, error) {
+	switch h.mode {
+	case modeAck:
+		return core.ACK, nil
+	case modeRetry:
+		return core.RETRY, nil
+	case modeRequeue:
+		return core.REQUEUE, nil
+	case modeDrop:
+		return core.DROP, nil
+	case modeError:
+		return core.ACK, errors.New("demo forced error")
+	default:
+		n := h.seq.Add(1)
+		switch n % 5 {
+		case 1:
+			return core.ACK, nil
+		case 2:
+			return core.RETRY, nil
+		case 3:
+			return core.REQUEUE, nil
+		case 4:
+			return core.DROP, nil
+		default:
+			return core.ACK, errors.New("demo forced error")
+		}
+	}
+}
 
 func (h *OrderJobHandler) Handle(ctx context.Context, m *core.Message) (core.Result, error) {
 	job := &OrderJob{}
 	_ = json.Unmarshal(m.Payload, job)
-	duration := time.Duration(30+rand.Intn(31)) * time.Second
+
+	duration := time.Duration(100+rand.Intn(200)) * time.Millisecond
 	select {
 	case <-time.After(duration):
-		return core.ACK, nil
+		return h.nextResult()
 	case <-ctx.Done():
 		return core.RETRY, ctx.Err()
 	}
@@ -74,6 +131,9 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	resultMode := parseDemoResultMode(os.Getenv("DEMO_RESULT_MODE"))
+	log.Printf("[Main] DEMO_RESULT_MODE=%s", resultMode)
+
 	s, err := asyncqueue.NewServer(queueCfg, asyncqueue.WithDriver("redis", queue.NewRedisDriver(client)))
 	if err != nil {
 		log.Fatalf("[Main] failed to load server: %v", err)
@@ -88,7 +148,7 @@ func main() {
 		serveMux := asyncqueue.NewServeMux()
 		orderJob := &OrderJob{}
 
-		orderJobHandler := &OrderJobHandler{}
+		orderJobHandler := &OrderJobHandler{mode: resultMode}
 		// 1.queue.HandlerFunc func
 		//serveMux.Register(orderJob.GetType(), queue.HandlerFunc(func(ctx context.Context, m *core.Message) (core.Result, error) {
 		//	job := &OrderJob{}

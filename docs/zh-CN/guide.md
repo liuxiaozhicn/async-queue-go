@@ -141,6 +141,47 @@ flowchart LR
 - `timeout` 和 `failed` 都不会自动回到 `waiting`
 - 手动重装载是显式操作，所以单独拆成一张恢复图
 
+### 状态流转矩阵
+
+| 阶段 | 触发条件 | 队列流转 | 持久化状态 |
+| --- | --- | --- | --- |
+| 生产 | `Push(delay=0)` | `-> waiting` | `waiting` |
+| 生产 | `Push(delay>0)` | `-> delayed` | `delayed` |
+| 转发 | delayed 到期 | `delayed -> waiting` | `waiting` |
+| 消费获取 | `Pop` | `waiting -> reserved` | `reserved` |
+| 消费提交 | `ACK` | `reserved -> (移除)` | `done` |
+| 消费提交 | `DROP` | `reserved -> (移除)` | `dropped` |
+| 消费提交 | `REQUEUE` | `reserved -> waiting` | `waiting` |
+| 消费提交 | `RETRY` 且 `delay>0` | `reserved -> delayed` | `delayed` |
+| 消费提交 | `RETRY` 且 `delay<=0` | `reserved -> waiting` | `waiting` |
+| 消费异常 | error 且可重试，`delay>0` | `reserved -> delayed` | `delayed` |
+| 消费异常 | error 且可重试，`delay<=0` | `reserved -> waiting` | `waiting` |
+| 消费终态 | error/RETRY 且重试耗尽 | `reserved -> failed` | `failed` |
+| 转发 | 保留超时 | `reserved -> timeout` | `timeout` |
+| 人工操作 | `Reload("timeout")` | `timeout -> waiting` | `waiting` |
+| 人工操作 | `Reload("failed")` | `failed -> waiting` | `waiting` |
+| 人工操作 | `CancelByID`（仅 `delayed`） | `delayed -> (移除)` | `canceled` |
+
+### 并发与一致性规则
+
+| 规则 | 原因 |
+| --- | --- |
+| 队列位置是调度状态的唯一真相 | `waiting/reserved/delayed` 直接决定消息能否被消费、重试或取消 |
+| `status` 是持久化视图，不应单独作为决策依据 | 高吞吐下应先用 Lua 队列操作判定，再回写状态 |
+| 每条已消费消息只允许一次提交动作 | 消息进入 `reserved` 后，语义上只能落到 `ACK/RETRY/REQUEUE/DROP/FAIL` 之一 |
+| 重试路径固定为 `reserved -> waiting/delayed` | `delay<=0` 进入下一轮立即调度（`waiting`），`delay>0` 进入退避（`delayed`） |
+| 取消仅允许在 `delayed` | 消息进入 `waiting` 或 `reserved` 后按设计拒绝取消 |
+
+### 排障检查清单
+
+| 现象 | 优先检查项 |
+| --- | --- |
+| 消息长时间停在 `reserved` | 检查 handler 超时与提交动作（`ACK/RETRY/...`）是否报错 |
+| 消息频繁进入 `timeout` | 检查 `handleTimeout` 是否小于真实处理 p99 |
+| 重试后没有进入延迟 | 检查重试延迟值；`delay<=0` 本来就会回 `waiting` |
+| 取消返回 false | 确认消息是否仍在 `delayed`（而不是 `waiting/reserved`） |
+| 状态字段看起来不一致 | 先查队列归属，再看 `message:<id>` 的状态内容 |
+
 ## Handler 返回值语义
 
 | 返回值 | 含义 |
@@ -148,9 +189,11 @@ flowchart LR
 | `core.ACK` | 成功完成，从保留队列移除 |
 | `core.RETRY` | 按重试策略进入延迟队列 |
 | `core.REQUEUE` | 立即回到等待队列 |
-| `core.DROP` | 直接丢弃，不再重试 |
+| `core.DROP` | 把消息标记为 `dropped`，并停止后续重试 |
 
 如果 handler 返回 `error`，框架会走错误处理路径，而不是使用显式返回的 `Result`。
+
+`DROP` 是业务层面的丢弃决策，不是物理删除。消息会离开活动处理队列，但消息实体仍可能保留到 TTL 到期。
 
 ## Redis 存储模型
 
@@ -204,8 +247,7 @@ Redis 驱动会按 `channel` 生成一组 key：
 | `PushMessage(ctx, msg, delaySeconds)` | 投递原始消息 |
 | `Info(ctx)` | 获取 waiting / reserved / delayed / timeout / failed 统计 |
 | `GetMessage(ctx, id)` | 获取消息详情 |
-| `DeleteMessage(ctx, msg)` | 按消息实体删除 |
-| `DeleteByID(ctx, id)` | 按 message id 删除 |
+| `CancelByID(ctx, id)` | 取消仍处于 `delayed`、尚未进入调度阶段的消息，并把状态标记为 `canceled` |
 | `RetryByID(ctx, id, delaySeconds)` | 重新设定延迟后重试 |
 | `Reload(ctx, "timeout"|"failed")` | 把 timeout 或 failed 消息重新放回 waiting |
 | `Flush(ctx, queueName)` | 清空一个内部队列 |
@@ -230,24 +272,20 @@ Redis 驱动会按 `channel` 生成一组 key：
 type Driver interface {
     Ping(ctx context.Context) error
     Push(ctx context.Context, channel string, m *core.Message, delaySeconds int, messageTTL int) error
-    Delete(ctx context.Context, channel string, m *core.Message) error
+    Get(ctx context.Context, channel string, id string) (*core.Message, error)
+    Cancel(ctx context.Context, channel string, id string) (bool, error)
     Pop(ctx context.Context, channel string, popTimeout time.Duration, handleTimeout time.Duration) (string, *core.Message, error)
-    Remove(ctx context.Context, channel string, messageID string) error
     Ack(ctx context.Context, channel string, messageID string) error
     Fail(ctx context.Context, channel string, messageID string) error
+    Drop(ctx context.Context, channel string, messageID string) error
     Requeue(ctx context.Context, channel string, messageID string) error
-    Retry(ctx context.Context, channel string, m *core.Message, retrySeconds []int) error
+    Retry(ctx context.Context, channel string, id string, delaySeconds int) (bool, error)
     Reload(ctx context.Context, channel string, queue string) (int, error)
     Flush(ctx context.Context, channel string, queue string) error
     Info(ctx context.Context, channel string) (Info, error)
+    ForwardMessages(ctx context.Context, channel string) (int64, int64, error)
 }
 ```
-
-可选能力：
-
-- `MessageReader`
-- `MessageWriter`
-- `MessageForwarder`
 
 注册方式：
 
@@ -278,3 +316,11 @@ server, err := asyncqueue.NewServer(
 queueInstance, err := server.Queue("order")
 id, err := queueInstance.PushJob(ctx, job, 0)
 ```
+
+### `DROP` 的语义是什么？
+
+- `DROP` 是消费结果，表示业务明确决定不再继续处理这条消息，消息状态会变成 `dropped`。
+### `CancelByID` 的行为是什么？
+- `CancelByID` 用于消息还处于 `delayed` 阶段时主动放弃调度。
+- 如果消息已经进入 `waiting`，说明它已经进入待调度阶段，会返回 `ErrMessageAlreadyReadyForDispatch`，不再允许取消。
+- 如果消息已经进入 `reserved`，说明它已经被消费者取走并进入执行阶段，会返回 `ErrMessageAlreadyInExecution`。

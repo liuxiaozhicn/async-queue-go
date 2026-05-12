@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -62,7 +63,7 @@ func mustMessage(t *testing.T, id int) *core.Message {
 	return m
 }
 
-func TestPushDeleteInfo(t *testing.T) {
+func TestPushCancelInfo(t *testing.T) {
 	d, _, done := newDriverForTest(t)
 	defer done()
 	ctx := context.Background()
@@ -84,12 +85,16 @@ func TestPushDeleteInfo(t *testing.T) {
 		t.Fatalf("unexpected info: %+v", info)
 	}
 
-	if err := d.Delete(ctx, testChannel, m2); err != nil {
+	ok, err := d.Cancel(ctx, testChannel, m2.ID)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected cancel success")
 	}
 	info, _ = d.Info(ctx, testChannel)
 	if info.Delayed != 0 {
-		t.Fatalf("delete failed, info=%+v", info)
+		t.Fatalf("cancel failed, info=%+v", info)
 	}
 }
 
@@ -139,6 +144,138 @@ func TestPopAckFailMove(t *testing.T) {
 	}
 }
 
+func TestDropMarksMessageDropped(t *testing.T) {
+	d, _, done := newDriverForTest(t)
+	defer done()
+	ctx := context.Background()
+
+	m := mustMessage(t, 3)
+	if err := d.Push(ctx, testChannel, m, 0, 120); err != nil {
+		t.Fatal(err)
+	}
+	messageID, _, err := d.Pop(ctx, testChannel, time.Second, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if messageID == "" {
+		t.Fatal("expected message id")
+	}
+	if err := d.Drop(ctx, testChannel, messageID); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := d.Info(ctx, testChannel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Reserved != 0 {
+		t.Fatalf("expected reserved=0 after drop, got %+v", info)
+	}
+
+	msg, err := d.Get(ctx, testChannel, messageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.Status != core.StatusDropped {
+		t.Fatalf("expected dropped status, got %s", msg.Status)
+	}
+}
+
+func TestCancelByIDMarksMessageCanceled(t *testing.T) {
+	d, _, done := newDriverForTest(t)
+	defer done()
+	ctx := context.Background()
+
+	m := mustMessage(t, 4)
+	if err := d.Push(ctx, testChannel, m, 10, 120); err != nil {
+		t.Fatal(err)
+	}
+	ok, err := d.Cancel(ctx, testChannel, m.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected cancel success")
+	}
+
+	info, err := d.Info(ctx, testChannel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Delayed != 0 {
+		t.Fatalf("expected delayed=0 after cancel, got %+v", info)
+	}
+
+	msg, err := d.Get(ctx, testChannel, m.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.Status != core.StatusCanceled {
+		t.Fatalf("expected canceled status, got %s", msg.Status)
+	}
+}
+
+func TestCancelByIDReservedReturnsInExecutionError(t *testing.T) {
+	d, _, done := newDriverForTest(t)
+	defer done()
+	ctx := context.Background()
+
+	m := mustMessage(t, 6)
+	if err := d.Push(ctx, testChannel, m, 0, 120); err != nil {
+		t.Fatal(err)
+	}
+	messageID, _, err := d.Pop(ctx, testChannel, time.Second, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if messageID == "" {
+		t.Fatal("expected message id")
+	}
+
+	ok, err := d.Cancel(ctx, testChannel, messageID)
+	if !errors.Is(err, ErrMessageAlreadyInExecution) {
+		t.Fatalf("expected ErrMessageAlreadyInExecution, got %v", err)
+	}
+	if ok {
+		t.Fatal("expected cancel false for reserved message")
+	}
+
+	info, err := d.Info(ctx, testChannel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Reserved != 1 {
+		t.Fatalf("expected reserved=1 after cancel miss, got %+v", info)
+	}
+}
+
+func TestCancelByIDWaitingReturnsReadyForDispatchError(t *testing.T) {
+	d, _, done := newDriverForTest(t)
+	defer done()
+	ctx := context.Background()
+
+	m := mustMessage(t, 7)
+	if err := d.Push(ctx, testChannel, m, 0, 120); err != nil {
+		t.Fatal(err)
+	}
+
+	ok, err := d.Cancel(ctx, testChannel, m.ID)
+	if !errors.Is(err, ErrMessageAlreadyReadyForDispatch) {
+		t.Fatalf("expected ErrMessageAlreadyReadyForDispatch, got %v", err)
+	}
+	if ok {
+		t.Fatal("expected cancel false for waiting message")
+	}
+
+	info, err := d.Info(ctx, testChannel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Waiting != 1 {
+		t.Fatalf("expected waiting=1 after cancel reject, got %+v", info)
+	}
+}
+
 func TestMoveDelayedAndReservedTimeoutAndReloadFlush(t *testing.T) {
 	d, fc, done := newDriverForTest(t)
 	defer done()
@@ -146,7 +283,11 @@ func TestMoveDelayedAndReservedTimeoutAndReloadFlush(t *testing.T) {
 	keys := NewKeys(testChannel)
 
 	m := mustMessage(t, 5)
-	if err := d.storeMessage(ctx, testChannel, m); err != nil {
+	raw, err := m.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.client.Set(ctx, keys.Message(m.ID), raw, 0).Err(); err != nil {
 		t.Fatal(err)
 	}
 	if err := d.client.ZAdd(ctx, keys.Delayed, redis.Z{Score: float64(fc.Now().Unix() - 1), Member: m.ID}).Err(); err != nil {
@@ -197,6 +338,90 @@ func TestMoveDelayedAndReservedTimeoutAndReloadFlush(t *testing.T) {
 	info, _ = d.Info(ctx, testChannel)
 	if info.Waiting != 0 {
 		t.Fatalf("expected waiting=0 after flush, got %+v", info)
+	}
+}
+
+func TestRetryZeroDelayMovesToWaiting(t *testing.T) {
+	d, _, done := newDriverForTest(t)
+	defer done()
+	ctx := context.Background()
+
+	m := mustMessage(t, 55)
+	if err := d.Push(ctx, testChannel, m, 0, 120); err != nil {
+		t.Fatal(err)
+	}
+	messageID, _, err := d.Pop(ctx, testChannel, time.Second, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if messageID == "" {
+		t.Fatal("expected message id")
+	}
+
+	ok, err := d.Retry(ctx, testChannel, messageID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected retry success")
+	}
+
+	info, err := d.Info(ctx, testChannel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Waiting != 1 || info.Delayed != 0 || info.Reserved != 0 {
+		t.Fatalf("unexpected queue state after retry zero delay: %+v", info)
+	}
+
+	msg, err := d.Get(ctx, testChannel, messageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.Status != core.StatusWaiting {
+		t.Fatalf("expected waiting status after retry zero delay, got %s", msg.Status)
+	}
+}
+
+func TestRetryPositiveDelayMovesToDelayed(t *testing.T) {
+	d, _, done := newDriverForTest(t)
+	defer done()
+	ctx := context.Background()
+
+	m := mustMessage(t, 56)
+	if err := d.Push(ctx, testChannel, m, 0, 120); err != nil {
+		t.Fatal(err)
+	}
+	messageID, _, err := d.Pop(ctx, testChannel, time.Second, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if messageID == "" {
+		t.Fatal("expected message id")
+	}
+
+	ok, err := d.Retry(ctx, testChannel, messageID, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected retry success")
+	}
+
+	info, err := d.Info(ctx, testChannel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Delayed != 1 || info.Waiting != 0 || info.Reserved != 0 {
+		t.Fatalf("unexpected queue state after retry positive delay: %+v", info)
+	}
+
+	msg, err := d.Get(ctx, testChannel, messageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.Status != core.StatusDelayed {
+		t.Fatalf("expected delayed status after retry positive delay, got %s", msg.Status)
 	}
 }
 

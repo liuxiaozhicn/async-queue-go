@@ -1,6 +1,8 @@
 package queue
 
-import "github.com/redis/go-redis/v9"
+import (
+	"github.com/redis/go-redis/v9"
+)
 
 var pushScript = redis.NewScript(`
 local waiting = KEYS[1]
@@ -61,6 +63,34 @@ for _, id in ipairs(ids) do
     end
 end
 return #ids
+`)
+
+// moveTimeoutScript moves expired reserved messages to the timeout queue without
+// updating message status. This avoids a race where a consumer finishes after
+// the forwarder has already moved the message, leaving a stale timeout entry
+// with a terminal status. The reloadScript checks status before re-queuing.
+var moveTimeoutScript = redis.NewScript(`
+local from = KEYS[1]
+local to = KEYS[2]
+local msgPrefix = KEYS[3]
+
+local now = tonumber(ARGV[1])
+
+local ids = redis.call('ZRANGEBYSCORE', from, '-inf', now, 'LIMIT', 0, 100)
+if #ids == 0 then
+    return 0
+end
+
+local moved = 0
+for _, id in ipairs(ids) do
+    redis.call('ZREM', from, id)
+    local msgKey = msgPrefix .. id
+    if redis.call('EXISTS', msgKey) == 1 then
+        redis.call('LPUSH', to, id)
+        moved = moved + 1
+    end
+end
+return moved
 `)
 
 var popScript = redis.NewScript(`
@@ -151,6 +181,32 @@ redis.call('LPUSH', failed, id)
 return 1
 `)
 
+var dropScript = redis.NewScript(`
+local reserved = KEYS[1]
+local msgKey = KEYS[2]
+
+local id = ARGV[1]
+local now = tonumber(ARGV[2])
+
+redis.call('ZREM', reserved, id)
+local raw = redis.call('GET', msgKey)
+if not raw then
+    return 1
+end
+local ok, msg = pcall(cjson.decode, raw)
+if not ok or type(msg) ~= 'table' then
+    return 1
+end
+msg["status"] = "dropped"
+msg["updated_at"] = now
+local ttl = redis.call('TTL', msgKey)
+redis.call('SET', msgKey, cjson.encode(msg))
+if ttl > 0 then
+    redis.call('EXPIRE', msgKey, ttl)
+end
+return 1
+`)
+
 var requeueScript = redis.NewScript(`
 local reserved = KEYS[1]
 local waiting = KEYS[2]
@@ -179,48 +235,6 @@ redis.call('LPUSH', waiting, id)
 return 1
 `)
 
-var retryScript = redis.NewScript(`
-local reserved = KEYS[1]
-local delayed = KEYS[2]
-local msgKey = KEYS[3]
-
-local id = ARGV[1]
-local score = tonumber(ARGV[2])
-local msgRaw = ARGV[3]
-
-redis.call('ZREM', reserved, id)
-local ttl = redis.call('TTL', msgKey)
-redis.call('SET', msgKey, msgRaw)
-if ttl > 0 then
-    redis.call('EXPIRE', msgKey, ttl)
-end
-redis.call('ZADD', delayed, score, id)
-return 1
-`)
-
-var deleteByIDScript = redis.NewScript(`
-local waiting = KEYS[1]
-local reserved = KEYS[2]
-local delayed = KEYS[3]
-local timeout = KEYS[4]
-local failed = KEYS[5]
-local msgKey = KEYS[6]
-
-local id = ARGV[1]
-
-local removed = 0
-removed = removed + redis.call('LREM', waiting, 0, id)
-removed = removed + redis.call('ZREM', reserved, id)
-removed = removed + redis.call('ZREM', delayed, id)
-removed = removed + redis.call('LREM', timeout, 0, id)
-removed = removed + redis.call('LREM', failed, 0, id)
-redis.call('DEL', msgKey)
-if removed > 0 then
-    return 1
-end
-return 0
-`)
-
 var retryByIDScript = redis.NewScript(`
 local waiting = KEYS[1]
 local reserved = KEYS[2]
@@ -232,23 +246,89 @@ local msgKey = KEYS[6]
 local id = ARGV[1]
 local score = tonumber(ARGV[2])
 local msgRaw = ARGV[3]
+local mode = ARGV[4]
 
+-- Fast path for consumer retry: message is expected in reserved.
+local removedReserved = redis.call('ZREM', reserved, id)
+if removedReserved > 0 then
+    local ttl = redis.call('TTL', msgKey)
+    redis.call('SET', msgKey, msgRaw)
+    if ttl > 0 then
+        redis.call('EXPIRE', msgKey, ttl)
+    end
+    if mode == 'waiting' then
+        redis.call('LPUSH', waiting, id)
+    else
+        redis.call('ZADD', delayed, score, id)
+    end
+    return 1
+end
+
+-- Compatibility path for management retry by id.
 local removed = 0
 removed = removed + redis.call('LREM', waiting, 0, id)
-removed = removed + redis.call('ZREM', reserved, id)
 removed = removed + redis.call('ZREM', delayed, id)
 removed = removed + redis.call('LREM', timeout, 0, id)
 removed = removed + redis.call('LREM', failed, 0, id)
 if removed == 0 then
     return 0
 end
+
 local ttl = redis.call('TTL', msgKey)
 redis.call('SET', msgKey, msgRaw)
 if ttl > 0 then
     redis.call('EXPIRE', msgKey, ttl)
 end
-redis.call('ZADD', delayed, score, id)
+if mode == 'waiting' then
+    redis.call('LPUSH', waiting, id)
+else
+    redis.call('ZADD', delayed, score, id)
+end
 return 1
+`)
+
+var cancelByIDScript = redis.NewScript(`
+local waiting = KEYS[1]
+local reserved = KEYS[2]
+local delayed = KEYS[3]
+local msgKey = KEYS[4]
+
+local id = ARGV[1]
+local now = tonumber(ARGV[2])
+
+-- 队列位置是唯一判定依据：先尝试从 delayed 移除
+local removed = redis.call('ZREM', delayed, id)
+if removed > 0 then
+    local raw = redis.call('GET', msgKey)
+    if raw then
+        local ok, msg = pcall(cjson.decode, raw)
+        if ok and type(msg) == 'table' then
+            msg["status"] = "canceled"
+            msg["updated_at"] = now
+            local pttl = redis.call('PTTL', msgKey)
+            redis.call('SET', msgKey, cjson.encode(msg))
+            if pttl > 0 then
+                redis.call('PEXPIRE', msgKey, pttl)
+            end
+        else
+            redis.call('DEL', msgKey)
+        end
+    end
+    return 1
+end
+
+-- 已在执行中
+if redis.call('ZSCORE', reserved, id) then
+    return -2
+end
+
+-- 已待调度
+if redis.call('LPOS', waiting, id) ~= nil then
+    return -1
+end
+
+-- 不存在或已终态
+return 0
 `)
 
 var reloadScript = redis.NewScript(`
@@ -256,6 +336,7 @@ local source = KEYS[1]
 local waiting = KEYS[2]
 local msgPrefix = KEYS[3]
 local now = tonumber(ARGV[1])
+local skipStale = ARGV[2] == "1"
 
 local count = 0
 for i=1,100 do
@@ -270,15 +351,23 @@ for i=1,100 do
     else
         local ok, msg = pcall(cjson.decode, raw)
         if ok and type(msg) == 'table' then
-            msg["status"] = "waiting"
-            msg["updated_at"] = now
-            local ttl = redis.call('TTL', msgKey)
-            redis.call('SET', msgKey, cjson.encode(msg))
-            if ttl > 0 then
-                redis.call('EXPIRE', msgKey, ttl)
+            local s = msg["status"]
+            if skipStale and (s == "done" or s == "dropped") then
+                -- already processed or intentionally dropped, no need to retry
+                redis.call('LREM', waiting, 0, id)
+            else
+                msg["status"] = "waiting"
+                msg["updated_at"] = now
+                local ttl = redis.call('TTL', msgKey)
+                redis.call('SET', msgKey, cjson.encode(msg))
+                if ttl > 0 then
+                    redis.call('EXPIRE', msgKey, ttl)
+                end
+                count = count + 1
             end
+        else
+            redis.call('LREM', waiting, 0, id)
         end
-        count = count + 1
     end
 end
 return count

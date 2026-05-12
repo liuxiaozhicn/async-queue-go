@@ -141,6 +141,47 @@ Notes:
 - `timeout` and `failed` do not go back to `waiting` automatically
 - manual reload is an explicit operation, so it is shown separately from the main processing path
 
+### State Transition Matrix
+
+| Stage | Trigger | Queue transition | Persisted status |
+| --- | --- | --- | --- |
+| Producer | `Push(delay=0)` | `-> waiting` | `waiting` |
+| Producer | `Push(delay>0)` | `-> delayed` | `delayed` |
+| Forwarder | delayed due | `delayed -> waiting` | `waiting` |
+| Consumer acquire | `Pop` | `waiting -> reserved` | `reserved` |
+| Consumer commit | `ACK` | `reserved -> (removed)` | `done` |
+| Consumer commit | `DROP` | `reserved -> (removed)` | `dropped` |
+| Consumer commit | `REQUEUE` | `reserved -> waiting` | `waiting` |
+| Consumer commit | `RETRY` with `delay>0` | `reserved -> delayed` | `delayed` |
+| Consumer commit | `RETRY` with `delay<=0` | `reserved -> waiting` | `waiting` |
+| Consumer error | error and attempts remain, `delay>0` | `reserved -> delayed` | `delayed` |
+| Consumer error | error and attempts remain, `delay<=0` | `reserved -> waiting` | `waiting` |
+| Consumer terminal | error/RETRY and attempts exhausted | `reserved -> failed` | `failed` |
+| Forwarder | reservation expired | `reserved -> timeout` | `timeout` |
+| Manual operation | `Reload("timeout")` | `timeout -> waiting` | `waiting` |
+| Manual operation | `Reload("failed")` | `failed -> waiting` | `waiting` |
+| Manual operation | `CancelByID` (only in `delayed`) | `delayed -> (removed)` | `canceled` |
+
+### Concurrency & Consistency Rules
+
+| Rule | Why |
+| --- | --- |
+| Queue position is the source of truth for dispatch state | `waiting/reserved/delayed` directly determine whether a message can be consumed, retried, or canceled |
+| Message `status` is a persisted view, not the only decision source | In high-throughput scenarios, decision logic should rely on queue operations in Lua first, then update status |
+| One commit action per consumed message | After a message is popped into `reserved`, only one of `ACK/RETRY/REQUEUE/DROP/FAIL` should succeed semantically |
+| Retry path is `reserved -> waiting/delayed` | `delay<=0` means immediate next scheduling round (`waiting`), `delay>0` means backoff (`delayed`) |
+| Cancel is allowed only in `delayed` | Once a message reaches `waiting` or `reserved`, cancellation is rejected by design |
+
+### Troubleshooting Checklist
+
+| Symptom | First checks |
+| --- | --- |
+| Message stuck in `reserved` | Check handler timeout and whether commit actions (`ACK/RETRY/...`) are returning errors |
+| Message unexpectedly in `timeout` | Check `handleTimeout` against real handler p99 latency |
+| Retry did not delay | Verify retry delay value; `delay<=0` intentionally goes to `waiting` |
+| Cancel returns false | Confirm message is still in `delayed` (not `waiting`/`reserved`) |
+| Status looks stale | Verify queue membership first, then inspect `message:<id>` payload |
+
 ## Handler Result Semantics
 
 | Result | Meaning |
@@ -148,9 +189,11 @@ Notes:
 | `core.ACK` | Success; remove the message from the reserved queue |
 | `core.RETRY` | Send the message to the delayed queue with retry policy |
 | `core.REQUEUE` | Move the message back to the waiting queue immediately |
-| `core.DROP` | Drop the message without retry |
+| `core.DROP` | Mark the message as `dropped` and stop retrying |
 
 If the handler returns `error`, the framework follows the error path instead of the explicit `Result`.
+
+`DROP` is a business-level discard decision, not a physical delete. The message leaves the active processing queues, but its entity can still remain until TTL expires.
 
 ## Redis Storage Model
 
@@ -204,8 +247,7 @@ The `{...}` hash tag keeps keys for one business queue in the same Redis Cluster
 | `PushMessage(ctx, msg, delaySeconds)` | Publish a raw message |
 | `Info(ctx)` | Read waiting / reserved / delayed / timeout / failed counts |
 | `GetMessage(ctx, id)` | Fetch message details |
-| `DeleteMessage(ctx, msg)` | Delete by message entity |
-| `DeleteByID(ctx, id)` | Delete by message id |
+| `CancelByID(ctx, id)` | Cancel a delayed message before it enters dispatch, and mark it as `canceled` |
 | `RetryByID(ctx, id, delaySeconds)` | Retry a message with a new delay |
 | `Reload(ctx, "timeout"|"failed")` | Move timeout or failed messages back to waiting |
 | `Flush(ctx, queueName)` | Clear one internal queue |
@@ -230,24 +272,20 @@ Implement:
 type Driver interface {
     Ping(ctx context.Context) error
     Push(ctx context.Context, channel string, m *core.Message, delaySeconds int, messageTTL int) error
-    Delete(ctx context.Context, channel string, m *core.Message) error
+    Get(ctx context.Context, channel string, id string) (*core.Message, error)
+    Cancel(ctx context.Context, channel string, id string) (bool, error)
     Pop(ctx context.Context, channel string, popTimeout time.Duration, handleTimeout time.Duration) (string, *core.Message, error)
-    Remove(ctx context.Context, channel string, messageID string) error
     Ack(ctx context.Context, channel string, messageID string) error
     Fail(ctx context.Context, channel string, messageID string) error
+    Drop(ctx context.Context, channel string, messageID string) error
     Requeue(ctx context.Context, channel string, messageID string) error
-    Retry(ctx context.Context, channel string, m *core.Message, retrySeconds []int) error
+    Retry(ctx context.Context, channel string, id string, delaySeconds int) (bool, error)
     Reload(ctx context.Context, channel string, queue string) (int, error)
     Flush(ctx context.Context, channel string, queue string) error
     Info(ctx context.Context, channel string) (Info, error)
+    ForwardMessages(ctx context.Context, channel string) (int64, int64, error)
 }
 ```
-
-Optional capabilities:
-
-- `MessageReader`
-- `MessageWriter`
-- `MessageForwarder`
 
 Registration:
 
@@ -278,3 +316,11 @@ Recommended usage:
 queueInstance, err := server.Queue("order")
 id, err := queueInstance.PushJob(ctx, job, 0)
 ```
+
+### What does `DROP` mean?
+
+- `DROP` is a consumer result. It means the business logic has decided not to continue processing the message, and the message status becomes `dropped`.
+### How does `CancelByID` behave?
+- `CancelByID` is for giving up dispatch while the message is still in `delayed`.
+- If the message is already in `waiting`, it has become dispatch-ready and cancellation is rejected with `ErrMessageAlreadyReadyForDispatch`.
+- If the message is already in `reserved`, it has been claimed by a consumer and cancellation is rejected with `ErrMessageAlreadyInExecution`.

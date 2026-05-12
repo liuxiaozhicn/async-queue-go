@@ -13,6 +13,8 @@ const (
 	StatusDelayed  MessageStatus = "delayed"
 	StatusTimeout  MessageStatus = "timeout"
 	StatusFailed   MessageStatus = "failed"
+	StatusCanceled MessageStatus = "canceled"
+	StatusDropped  MessageStatus = "dropped"
 	StatusDone     MessageStatus = "done"
 )
 
