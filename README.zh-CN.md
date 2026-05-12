@@ -62,14 +62,6 @@ cfg := &asyncqueue.Config{
 }
 ```
 
-关键参数建议：
-
-- `channel`：后端命名空间，生产端和消费端必须一致
-- `handle_timeout`：单条消息处理超时，通常设在 `60~300` 秒
-- `retry_seconds`：重试退避序列，建议递增
-- `max_attempts`：进入 `failed` 前的最大尝试次数
-- `processes` / `concurrent`：吞吐调节参数，按下游承载能力调优
-
 字段说明：
 
 | 字段 | 类型 | 默认值 | 说明 |
@@ -85,6 +77,14 @@ cfg := &asyncqueue.Config{
 | `processes` | `int` | `1` | 该队列 consumer 进程数（goroutine worker 组）。 |
 | `concurrent` | `int` | `1` | 每个 consumer 进程内的最大并发 in-flight 数。 |
 | `shutdown_timeout` | `int`（秒） | `30` | 队列 worker/forwarder 的优雅停机等待上限。 |
+
+关键参数建议：
+
+- `channel`：后端命名空间，生产端和消费端必须一致
+- `handle_timeout`：单条消息处理超时，通常设在 `60~300` 秒
+- `retry_seconds`：重试退避序列，建议递增
+- `max_attempts`：进入 `failed` 前的最大尝试次数
+- `processes` / `concurrent`：吞吐调节参数，按下游承载能力调优
 
 ## 推荐用法
 

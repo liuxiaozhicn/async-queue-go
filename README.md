@@ -62,14 +62,6 @@ cfg := &asyncqueue.Config{
 }
 ```
 
-Key parameters:
-
-- `channel`: backend namespace; producer and consumer must match
-- `handle_timeout`: per-message processing timeout; usually `60~300` seconds
-- `retry_seconds`: retry backoff schedule; use an increasing sequence
-- `max_attempts`: max delivery attempts before moving to `failed`
-- `processes` and `concurrent`: throughput knobs; tune against downstream capacity
-
 Field reference:
 
 | Field | Type | Default | Notes |
@@ -85,6 +77,14 @@ Field reference:
 | `processes` | `int` | `1` | Consumer process count for this queue (goroutine workers). |
 | `concurrent` | `int` | `1` | Max in-flight messages per consumer process. |
 | `shutdown_timeout` | `int` (seconds) | `30` | Graceful shutdown wait limit for queue workers/forwarder. |
+
+Key parameters:
+
+- `channel`: backend namespace; producer and consumer must match
+- `handle_timeout`: per-message processing timeout; usually `60~300` seconds
+- `retry_seconds`: retry backoff schedule; use an increasing sequence
+- `max_attempts`: max delivery attempts before moving to `failed`
+- `processes` and `concurrent`: throughput knobs; tune against downstream capacity
 
 ## Recommended Usage
 
