@@ -2,7 +2,7 @@
 
 [English](README.md) | 简体中文
 
-`async-queue-go` 是一个面向 Go 服务的异步任务队列库，当前内置 Redis 驱动，并保留了可扩展的 `Driver` 抽象。
+`async-queue-go` 是一个面向 Go 服务的异步任务队列库，当前内置 Redis 驱动，并保留了可扩展的`Driver`抽象。
 
 它提供：
 

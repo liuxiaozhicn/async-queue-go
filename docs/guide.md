@@ -62,20 +62,62 @@ server, err := asyncqueue.NewServer(
 )
 ```
 
-Optional usage:
-
-```go
-cfg, err := asyncqueue.LoadConfig("config.json")
-if err != nil {
-    return err
-}
-server, err := asyncqueue.NewServer(
-    cfg,
-    asyncqueue.WithDriver("redis", queue.NewRedisDriver(redisClient)),
-)
-```
 
 Use file-loading only when you intentionally manage queue settings from external files.
+
+## Configuration Reference
+
+### Complete Example
+
+```json
+{
+  "queues": {
+    "order": {
+      "driver": "redis",
+      "channel": "queue:order",
+      "enabled": true,
+      "pop_timeout": 3,
+      "handle_timeout": 180,
+      "retry_seconds": [10, 30, 60, 120, 300],
+      "message_ttl": 864000,
+      "max_attempts": 5,
+      "processes": 2,
+      "concurrent": 50,
+      "max_messages": 0,
+      "auto_restart": false,
+      "shutdown_timeout": 240
+    }
+  }
+}
+```
+
+### Parameter Details
+
+| Field | Default | Meaning | Recommended range / notes |
+| --- | --- | --- | --- |
+| `driver` | `redis` (auto-filled on file load) | Driver key resolved from `WithDriver(name, driver)` | Keep `redis` unless you register a custom driver |
+| `channel` | none (required) | Physical queue namespace in backend | Use stable, business-scoped names, e.g. `queue:order` |
+| `enabled` | `false` | Whether this queue starts workers/forwarder | `true` for active queues |
+| `pop_timeout` | `1` (config load fallback) | Empty poll wait in seconds | `1~5`, higher reduces empty-poll pressure |
+| `handle_timeout` | `10` (config load fallback) | Single message processing timeout in seconds | Usually `60~300`, set from handler p99 latency |
+| `retry_seconds` | `[5]` (config load fallback) | Retry backoff schedule in seconds | Increasing sequence, e.g. `[10,30,60,120,300]` |
+| `message_ttl` | `864000` | TTL for `message:<id>` entity in seconds | `1~30` days based on audit/debug needs; `0` means no expiration |
+| `max_attempts` | `3` | Maximum delivery attempts | Usually `3~8`; tune with business idempotency and SLA |
+| `processes` | `1` | Number of consumer processes in this runtime | Start with CPU core count or lower, then scale by throughput |
+| `concurrent` | `10` | Goroutine concurrency per process | Tune by downstream capacity (DB/RPC), avoid overload |
+| `max_messages` | `0` | Messages processed before worker exits (`0` unlimited) | Keep `0` for long-running workers |
+| `auto_restart` | `false` | Restart worker after `max_messages` reached | Enable only when intentionally using bounded workers |
+| `shutdown_timeout` | `30` | Graceful shutdown wait in seconds | Usually `60~300` for production |
+
+### Quick Tuning Guide
+
+| Symptom | Tune first |
+| --- | --- |
+| Messages frequently move to `timeout` | Increase `handle_timeout` |
+| Retry storms under failures | Increase `retry_seconds` backoff and/or reduce `max_attempts` |
+| High Redis CPU on idle queues | Increase `pop_timeout` |
+| Downstream DB/RPC saturation | Reduce `concurrent` or `processes` |
+| Slow shutdown on deploy/restart | Increase `shutdown_timeout` |
 
 ## Architecture
 
@@ -251,60 +293,6 @@ Meaning:
 
 The `{...}` hash tag keeps keys for one business queue in the same Redis Cluster slot.
 
-## Configuration Reference
-
-### Complete Example
-
-```json
-{
-  "queues": {
-    "order": {
-      "driver": "redis",
-      "channel": "queue:order",
-      "enabled": true,
-      "pop_timeout": 3,
-      "handle_timeout": 180,
-      "retry_seconds": [10, 30, 60, 120, 300],
-      "message_ttl": 864000,
-      "max_attempts": 5,
-      "processes": 2,
-      "concurrent": 50,
-      "max_messages": 0,
-      "auto_restart": false,
-      "shutdown_timeout": 240
-    }
-  }
-}
-```
-
-### Parameter Details
-
-| Field | Default | Meaning | Recommended range / notes |
-| --- | --- | --- | --- |
-| `driver` | `redis` (auto-filled on file load) | Driver key resolved from `WithDriver(name, driver)` | Keep `redis` unless you register a custom driver |
-| `channel` | none (required) | Physical queue namespace in backend | Use stable, business-scoped names, e.g. `queue:order` |
-| `enabled` | `false` | Whether this queue starts workers/forwarder | `true` for active queues |
-| `pop_timeout` | `1` (config load fallback) | Empty poll wait in seconds | `1~5`, higher reduces empty-poll pressure |
-| `handle_timeout` | `10` (config load fallback) | Single message processing timeout in seconds | Usually `60~300`, set from handler p99 latency |
-| `retry_seconds` | `[5]` (config load fallback) | Retry backoff schedule in seconds | Increasing sequence, e.g. `[10,30,60,120,300]` |
-| `message_ttl` | `864000` | TTL for `message:<id>` entity in seconds | `1~30` days based on audit/debug needs; `0` means no expiration |
-| `max_attempts` | `3` | Maximum delivery attempts | Usually `3~8`; tune with business idempotency and SLA |
-| `processes` | `1` | Number of consumer processes in this runtime | Start with CPU core count or lower, then scale by throughput |
-| `concurrent` | `10` | Goroutine concurrency per process | Tune by downstream capacity (DB/RPC), avoid overload |
-| `max_messages` | `0` | Messages processed before worker exits (`0` unlimited) | Keep `0` for long-running workers |
-| `auto_restart` | `false` | Restart worker after `max_messages` reached | Enable only when intentionally using bounded workers |
-| `shutdown_timeout` | `30` | Graceful shutdown wait in seconds | Usually `60~300` for production |
-
-### Quick Tuning Guide
-
-| Symptom | Tune first |
-| --- | --- |
-| Messages frequently move to `timeout` | Increase `handle_timeout` |
-| Retry storms under failures | Increase `retry_seconds` backoff and/or reduce `max_attempts` |
-| High Redis CPU on idle queues | Increase `pop_timeout` |
-| Downstream DB/RPC saturation | Reduce `concurrent` or `processes` |
-| Slow shutdown on deploy/restart | Increase `shutdown_timeout` |
-
 ## Queue Management APIs
 
 | Method | Purpose |
@@ -325,6 +313,16 @@ If you do not want `Server` / `Manager`, you can compose the runtime yourself:
 - `queue.NewRedisDriver(...)`
 - `queue.NewConsumer(...)`
 - `worker.NewWorker(...)`
+
+Default `NewConsumer(...)` options (when not overridden):
+
+| Option | Default |
+| --- | --- |
+| `concurrentLimit` | `10` |
+| `popTimeout` | `3s` |
+| `handleTimeout` | `180s` |
+| `retrySeconds` | `[10,30,60,120,300]` |
+| `messageTTL` | `864000` (10 days) |
 
 Reference:
 

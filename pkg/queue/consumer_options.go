@@ -6,6 +6,8 @@ import (
 	"github.com/liuxiaozhicn/async-queue-go/pkg/logger"
 )
 
+const defaultConsumerMessageTTLSeconds = 10 * 24 * 60 * 60
+
 type ConsumerOption func(*consumerOptions)
 
 type consumerOptions struct {
@@ -24,10 +26,11 @@ type consumerOptions struct {
 
 func defaultConsumerOptions() consumerOptions {
 	return consumerOptions{
-		concurrentLimit: 1,
-		PopTimeout:      time.Second,
-		handleTimeout:   10 * time.Second,
-		retrySeconds:    []int{5},
+		concurrentLimit: 10,
+		PopTimeout:      3 * time.Second,
+		handleTimeout:   180 * time.Second,
+		retrySeconds:    []int{30, 90, 180, 300},
+		messageTTL:      defaultConsumerMessageTTLSeconds,
 		logger:          logger.Default,
 	}
 }
