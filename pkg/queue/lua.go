@@ -27,6 +27,11 @@ end
 return 1
 `)
 
+// moveScript moves due members from a zset source to the waiting list.
+// It is used for:
+// 1) delayed -> waiting
+// 2) reserved (expired) -> timeout
+// For each moved id, message status is updated to ARGV[2].
 var moveScript = redis.NewScript(`
 local from = KEYS[1]
 local to = KEYS[2]
@@ -93,6 +98,9 @@ end
 return moved
 `)
 
+// popScript atomically claims one message from waiting:
+// waiting (RPOP) -> reserved (ZADD with deadline), and status -> reserved.
+// Returns claimed message id, or nil when waiting is empty.
 var popScript = redis.NewScript(`
 local waiting = KEYS[1]
 local reserved = KEYS[2]
@@ -127,6 +135,8 @@ while true do
 end
 `)
 
+// ackScript commits success:
+// remove from reserved and mark message status as done.
 var ackScript = redis.NewScript(`
 local reserved = KEYS[1]
 local msgKey = KEYS[2]
@@ -153,6 +163,8 @@ end
 return 1
 `)
 
+// failScript commits terminal failure:
+// remove from reserved, push to failed, and mark status as failed.
 var failScript = redis.NewScript(`
 local reserved = KEYS[1]
 local failed = KEYS[2]
@@ -181,6 +193,8 @@ redis.call('LPUSH', failed, id)
 return 1
 `)
 
+// dropScript commits business discard:
+// remove from reserved and mark status as dropped.
 var dropScript = redis.NewScript(`
 local reserved = KEYS[1]
 local msgKey = KEYS[2]
@@ -207,6 +221,8 @@ end
 return 1
 `)
 
+// requeueScript commits immediate re-dispatch:
+// remove from reserved, push to waiting, and mark status as waiting.
 var requeueScript = redis.NewScript(`
 local reserved = KEYS[1]
 local waiting = KEYS[2]
@@ -235,6 +251,19 @@ redis.call('LPUSH', waiting, id)
 return 1
 `)
 
+// retryByIDScript re-schedules a message for another attempt.
+// Inputs:
+// - KEYS: waiting, reserved, delayed, timeout, failed, msgKey
+// - ARGV: id, score, msgRaw, mode(waiting|delayed)
+//
+// Behavior:
+// 1) Fast path for consumer retry: remove from reserved first.
+// 2) Compatibility path for management retry: remove from active/dead-letter queues.
+// 3) Rewrite message payload/status (msgRaw), preserve TTL, enqueue by mode.
+//
+// Returns:
+// - 1: retried successfully
+// - 0: target id not found in expected queues
 var retryByIDScript = redis.NewScript(`
 local waiting = KEYS[1]
 local reserved = KEYS[2]
@@ -287,6 +316,21 @@ end
 return 1
 `)
 
+// cancelByIDScript cancels a message only when it is still delayed.
+// Inputs:
+// - KEYS: waiting, reserved, delayed, msgKey
+// - ARGV: id, now
+//
+// Decision priority is queue position (source of truth):
+// 1) delayed: cancel success, mark status canceled
+// 2) reserved: reject (already in execution)
+// 3) waiting: reject (already ready for dispatch)
+//
+// Returns:
+// - 1: canceled
+// - 0: not found or terminal state
+// - -1: already ready for dispatch (waiting)
+// - -2: already in execution (reserved)
 var cancelByIDScript = redis.NewScript(`
 local waiting = KEYS[1]
 local reserved = KEYS[2]
@@ -322,7 +366,7 @@ if redis.call('ZSCORE', reserved, id) then
     return -2
 end
 
--- 已待调度
+-- 已待调度中
 if redis.call('LPOS', waiting, id) ~= nil then
     return -1
 end
@@ -331,6 +375,8 @@ end
 return 0
 `)
 
+// reloadScript manually moves messages from source list (timeout/failed) back to waiting.
+// It updates status to waiting and preserves message TTL.
 var reloadScript = redis.NewScript(`
 local source = KEYS[1]
 local waiting = KEYS[2]
@@ -352,7 +398,7 @@ for i=1,100 do
         local ok, msg = pcall(cjson.decode, raw)
         if ok and type(msg) == 'table' then
             local s = msg["status"]
-            if skipStale and (s == "done" or s == "dropped") then
+            if skipStale and (s == "done" or s == "dropped" or s == "canceled") then
                 -- already processed or intentionally dropped, no need to retry
                 redis.call('LREM', waiting, 0, id)
             else

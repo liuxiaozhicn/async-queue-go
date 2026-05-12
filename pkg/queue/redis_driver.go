@@ -325,7 +325,7 @@ func (d *RedisDriver) Requeue(ctx context.Context, channel string, messageID str
 func (d *RedisDriver) Reload(ctx context.Context, channel string, queue string) (int, error) {
 	keys := d.getKeys(channel)
 	source := keys.Failed
-	skipStale := "0"
+	skip := "0"
 	if queue != "" {
 		if queue != "timeout" && queue != "failed" {
 			return 0, fmt.Errorf("queue %s is not supported", queue)
@@ -333,7 +333,7 @@ func (d *RedisDriver) Reload(ctx context.Context, channel string, queue string) 
 		k, _ := keys.Get(queue)
 		source = k
 		if queue == "timeout" {
-			skipStale = "1"
+			skip = "1"
 		}
 	}
 
@@ -343,7 +343,7 @@ func (d *RedisDriver) Reload(ctx context.Context, channel string, queue string) 
 			ctx,
 			d.client,
 			[]string{source, keys.Waiting, keys.MessagePrefix},
-			d.clock.Now().Unix(), skipStale,
+			d.clock.Now().Unix(), skip,
 		).Result()
 		if err != nil {
 			return total, err
