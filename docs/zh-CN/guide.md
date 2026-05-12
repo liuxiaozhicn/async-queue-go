@@ -36,16 +36,46 @@
 }
 ```
 
-从配置文件加载：
+常规用法（推荐）：在代码里构建 `Config`，直接用 `NewServer`。
 
 ```go
-server, err := asyncqueue.LoadServer(
-    "config.json",
+cfg := &asyncqueue.Config{
+    Queues: map[string]asyncqueue.QueueConfig{
+        "order": {
+            Driver:        "redis",
+            Channel:       "queue:order",
+            Enabled:       true,
+            PopTimeout:    3,
+            HandleTimeout: 180,
+            RetrySeconds:  []int{10, 30, 60, 120, 300},
+            MessageTTL:    864000,
+            MaxAttempts:   5,
+            Processes:     2,
+            Concurrent:    50,
+        },
+    },
+}
+
+server, err := asyncqueue.NewServer(
+    cfg,
     asyncqueue.WithDriver("redis", queue.NewRedisDriver(redisClient)),
 )
 ```
 
-如果你是在 Go 代码里直接手写 `Config`，请显式填写 `Driver` 和各项运行参数，不要依赖文件加载时的默认值补齐。
+可选方式：
+
+```go
+cfg, err := asyncqueue.LoadConfig("config.json")
+if err != nil {
+    return err
+}
+server, err := asyncqueue.NewServer(
+    cfg,
+    asyncqueue.WithDriver("redis", queue.NewRedisDriver(redisClient)),
+)
+```
+
+只有在你明确需要外部配置文件托管参数时，再使用“先 `LoadConfig` 再 `NewServer`”。
 
 ## 架构说明
 
@@ -223,21 +253,57 @@ Redis 驱动会按 `channel` 生成一组 key：
 
 ## 配置项说明
 
-| 字段 | 默认值 | 说明 |
-| --- | --- | --- |
-| `driver` | `redis`（仅配置文件加载时自动补） | 用于从 `WithDriver(name, driver)` 注册表中取驱动 |
-| `channel` | 无 | 后端存储通道，必须和生产端一致 |
-| `enabled` | `false` | 是否启用该队列 |
-| `pop_timeout` | `1` | 空轮询等待秒数 |
-| `handle_timeout` | `10` | 单条消息处理超时秒数 |
-| `retry_seconds` | `[5]` | 重试退避序列 |
-| `message_ttl` | `864000` | 消息实体 TTL，单位秒 |
-| `max_attempts` | `3` | 最大尝试次数 |
-| `processes` | `1` | 进程内启动的消费者实例数 |
-| `concurrent` | `10` | 每个消费者实例的并发度 |
-| `max_messages` | `0` | 单个消费者处理上限；`0` 表示不限制 |
-| `auto_restart` | `false` | 达到 `max_messages` 后是否重启 worker |
-| `shutdown_timeout` | `30` | 优雅停机等待秒数 |
+### 完整示例
+
+```json
+{
+  "queues": {
+    "order": {
+      "driver": "redis",
+      "channel": "queue:order",
+      "enabled": true,
+      "pop_timeout": 3,
+      "handle_timeout": 180,
+      "retry_seconds": [10, 30, 60, 120, 300],
+      "message_ttl": 864000,
+      "max_attempts": 5,
+      "processes": 2,
+      "concurrent": 50,
+      "max_messages": 0,
+      "auto_restart": false,
+      "shutdown_timeout": 240
+    }
+  }
+}
+```
+
+### 参数明细
+
+| 字段 | 默认值 | 说明 | 推荐范围 / 建议 |
+| --- | --- | --- | --- |
+| `driver` | `redis`（配置文件加载时自动补） | 通过 `WithDriver(name, driver)` 查找驱动注册名 | 除非有自定义驱动，否则保持 `redis` |
+| `channel` | 无（必填） | 后端存储命名空间 | 使用稳定业务名，如 `queue:order` |
+| `enabled` | `false` | 是否启用该队列的消费与转发 | 生产队列一般设为 `true` |
+| `pop_timeout` | `1`（配置加载回退） | 空轮询等待秒数 | `1~5`，越大空轮询压力越低 |
+| `handle_timeout` | `10`（配置加载回退） | 单条消息处理超时秒数 | 常用 `60~300`，按 handler 的 p99 耗时设定 |
+| `retry_seconds` | `[5]`（配置加载回退） | 重试退避序列（秒） | 建议递增，如 `[10,30,60,120,300]` |
+| `message_ttl` | `864000` | `message:<id>` 实体 TTL（秒） | 按审计需要设 `1~30` 天；`0` 表示不过期 |
+| `max_attempts` | `3` | 最大投递尝试次数 | 常用 `3~8`，结合幂等性与业务 SLA 调整 |
+| `processes` | `1` | 当前进程内 consumer 实例数 | 可从 CPU 核数或更低起步，再按吞吐扩容 |
+| `concurrent` | `10` | 每个 consumer 实例并发数 | 按 DB/RPC 承载能力调，避免压垮下游 |
+| `max_messages` | `0` | 单个 worker 处理上限（`0` 不限制） | 长驻 worker 通常保持 `0` |
+| `auto_restart` | `false` | 达到 `max_messages` 后是否重启 worker | 仅在有意做短生命周期 worker 时开启 |
+| `shutdown_timeout` | `30` | 优雅停机等待秒数 | 生产常见 `60~300` |
+
+### 快速调优指引
+
+| 现象 | 优先调整项 |
+| --- | --- |
+| 消息频繁进入 `timeout` | 增大 `handle_timeout` |
+| 故障时重试风暴明显 | 拉长 `retry_seconds`、必要时降低 `max_attempts` |
+| 队列空闲时 Redis 压力偏高 | 增大 `pop_timeout` |
+| 下游 DB/RPC 被打满 | 降低 `concurrent` 或 `processes` |
+| 发布/停机时退出太慢 | 增大 `shutdown_timeout` |
 
 ## 队列管理能力
 

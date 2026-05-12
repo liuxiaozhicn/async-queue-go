@@ -56,20 +56,6 @@ func NewServer(cfg *Config, opts ...Option) (*Server, error) {
 	return s, nil
 }
 
-// LoadServer loads configuration from a file and creates a Server.
-func LoadServer(path string, opts ...Option) (*Server, error) {
-	cfg, err := LoadConfig(path)
-	if err != nil {
-		return nil, err
-	}
-	return NewServer(cfg, opts...)
-}
-
-// NewServerFromConfig is an alias for LoadServer.
-func NewServerFromConfig(path string, opts ...Option) (*Server, error) {
-	return LoadServer(path, opts...)
-}
-
 // Handle registers a handler for a queue.
 func (s *Server) Handle(queueName string, handler queue.Handler) {
 	if s == nil || s.serveMux == nil {

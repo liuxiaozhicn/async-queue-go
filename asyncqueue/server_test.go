@@ -22,7 +22,7 @@ type bindTestJob2 struct {
 func (j *bindTestJob2) GetType() string { return "bindTestJob2" }
 
 func TestServerLoadAndLifecycle(t *testing.T) {
-	t.Run("load server from config file", func(t *testing.T) {
+	t.Run("load config file then create server", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		configFile := filepath.Join(tmpDir, "config.json")
 		configData := map[string]any{
@@ -38,16 +38,20 @@ func TestServerLoadAndLifecycle(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		s, err := LoadServer(configFile)
+		cfg, err := LoadConfig(configFile)
 		if err != nil {
-			t.Fatalf("LoadServer failed: %v", err)
+			t.Fatalf("LoadConfig failed: %v", err)
+		}
+		s, err := NewServer(cfg)
+		if err != nil {
+			t.Fatalf("NewServer failed: %v", err)
 		}
 		if s == nil || s.config == nil || s.serveMux == nil || s.manager == nil {
 			t.Fatal("server not initialized correctly")
 		}
 	})
 
-	t.Run("new server from config alias", func(t *testing.T) {
+	t.Run("create server from loaded config", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		configFile := filepath.Join(tmpDir, "config.json")
 		configData := map[string]any{
@@ -63,9 +67,13 @@ func TestServerLoadAndLifecycle(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		s, err := NewServerFromConfig(configFile)
+		cfg, err := LoadConfig(configFile)
 		if err != nil {
-			t.Fatalf("NewServerFromConfig failed: %v", err)
+			t.Fatalf("LoadConfig failed: %v", err)
+		}
+		s, err := NewServer(cfg)
+		if err != nil {
+			t.Fatalf("NewServer failed: %v", err)
 		}
 		if s == nil {
 			t.Fatal("expected server")

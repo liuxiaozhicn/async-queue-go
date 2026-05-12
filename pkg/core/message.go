@@ -65,7 +65,6 @@ func DecodeMessage(data string) (*Message, error) {
 	if m.CreatedAt <= 0 {
 		m.CreatedAt = time.Now().Unix()
 	}
-	m.UpdatedAt = time.Now().Unix()
 	return &m, nil
 }
 
