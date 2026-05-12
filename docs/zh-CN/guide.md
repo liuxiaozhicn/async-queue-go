@@ -38,43 +38,84 @@
 
 常规用法（推荐）：在代码里构建 `Config`，直接用 `NewServer`。
 
+完整可运行示例：
+
 ```go
-cfg := &asyncqueue.Config{
-    Queues: map[string]asyncqueue.QueueConfig{
-        "order": {
-            Driver:        "redis",
-            Channel:       "queue:order",
-            Enabled:       true,
-            PopTimeout:    3,
-            HandleTimeout: 180,
-            RetrySeconds:  []int{10, 30, 60, 120, 300},
-            MessageTTL:    864000,
-            MaxAttempts:   5,
-            Processes:     2,
-            Concurrent:    50,
-        },
-    },
+package main
+
+import (
+	"context"
+	"log"
+
+	"github.com/redis/go-redis/v9"
+
+	asyncqueue "github.com/liuxiaozhicn/async-queue-go/asyncqueue"
+	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
+	"github.com/liuxiaozhicn/async-queue-go/pkg/queue"
+)
+
+type OrderJob struct {
+	OrderNo string `json:"order_no"`
 }
 
-server, err := asyncqueue.NewServer(
-    cfg,
-    asyncqueue.WithDriver("redis", queue.NewRedisDriver(redisClient)),
-)
-```
+func (j *OrderJob) GetType() string { return "order.create" }
 
-`Run` 前必须完成 handler 绑定：
+type OrderJobHandler struct{}
 
-```go
-serveMux := asyncqueue.NewServeMux()
-orderJobHandler := NewOrderJobHandler()
-serveMux.Handle((&OrderJob{}).GetType(), orderJobHandler)
+func (h *OrderJobHandler) Handle(ctx context.Context, m *core.Message) (core.Result, error) {
+	return core.ACK, nil
+}
 
-if err := server.Run(ctx, serveMux); err != nil {
-    return err
+func main() {
+	ctx := context.Background()
+	redisClient := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
+	driver := queue.NewRedisDriver(redisClient)
+
+	cfg := &asyncqueue.Config{
+		Queues: map[string]asyncqueue.QueueConfig{
+			"order": {
+				Driver:        "redis",
+				Channel:       "queue:order",
+				Enabled:       true,
+				PopTimeout:    3,
+				HandleTimeout: 180,
+				RetrySeconds:  []int{30, 90, 180, 300},
+				MessageTTL:    864000,
+				MaxAttempts:   5,
+				Processes:     2,
+				Concurrent:    50,
+			},
+		},
+	}
+
+	server, err := asyncqueue.NewServer(cfg, asyncqueue.WithDriver("redis", driver))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	serveMux := asyncqueue.NewServeMux()
+	serveMux.Handle((&OrderJob{}).GetType(), &OrderJobHandler{})
+
+	go func() {
+		if err := server.Run(ctx, serveMux); err != nil {
+			log.Fatal(err)
+		}
+	}()
+
+	q, err := server.Queue("order")
+	if err != nil {
+		log.Fatal(err)
+	}
+	messageID, err := q.PushJob(ctx, &OrderJob{OrderNo: "demo-1001"}, 0)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("published message id=%s", messageID)
 }
 ```
 
 如果启用队列对应的任务类型没有在 `ServeMux` 绑定，worker 启动会失败。
+你可以保留这个 `messageID`，后续用于 `GetMessage`、`CancelByID`、`RetryByID` 等管理操作。
 
 ## 配置项说明
 

@@ -38,43 +38,84 @@ The current repository ships with a Redis implementation and keeps the runtime b
 
 Primary usage (recommended): build `Config` in code and use `NewServer` directly.
 
-```go
-cfg := &asyncqueue.Config{
-    Queues: map[string]asyncqueue.QueueConfig{
-        "order": {
-            Driver:        "redis",
-            Channel:       "queue:order",
-            Enabled:       true,
-            PopTimeout:    3,
-            HandleTimeout: 180,
-            RetrySeconds:  []int{10, 30, 60, 120, 300},
-            MessageTTL:    864000,
-            MaxAttempts:   5,
-            Processes:     2,
-            Concurrent:    50,
-        },
-    },
-}
+Complete runnable example:
 
-server, err := asyncqueue.NewServer(
-    cfg,
-    asyncqueue.WithDriver("redis", queue.NewRedisDriver(redisClient)),
+```go
+package main
+
+import (
+	"context"
+	"log"
+
+	"github.com/redis/go-redis/v9"
+
+	asyncqueue "github.com/liuxiaozhicn/async-queue-go/asyncqueue"
+	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
+	"github.com/liuxiaozhicn/async-queue-go/pkg/queue"
 )
-```
 
-Handler binding is required before `Run`:
+type OrderJob struct {
+	OrderNo string `json:"order_no"`
+}
 
-```go
-serveMux := asyncqueue.NewServeMux()
-orderJobHandler := NewOrderJobHandler()
-serveMux.Handle((&OrderJob{}).GetType(), orderJobHandler)
+func (j *OrderJob) GetType() string { return "order.create" }
 
-if err := server.Run(ctx, serveMux); err != nil {
-    return err
+type OrderJobHandler struct{}
+
+func (h *OrderJobHandler) Handle(ctx context.Context, m *core.Message) (core.Result, error) {
+	return core.ACK, nil
+}
+
+func main() {
+	ctx := context.Background()
+	redisClient := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
+	driver := queue.NewRedisDriver(redisClient)
+
+	cfg := &asyncqueue.Config{
+		Queues: map[string]asyncqueue.QueueConfig{
+			"order": {
+				Driver:        "redis",
+				Channel:       "queue:order",
+				Enabled:       true,
+				PopTimeout:    3,
+				HandleTimeout: 180,
+				RetrySeconds:  []int{30, 90, 180, 300},
+				MessageTTL:    864000,
+				MaxAttempts:   5,
+				Processes:     2,
+				Concurrent:    50,
+			},
+		},
+	}
+
+	server, err := asyncqueue.NewServer(cfg, asyncqueue.WithDriver("redis", driver))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	serveMux := asyncqueue.NewServeMux()
+	serveMux.Handle((&OrderJob{}).GetType(), &OrderJobHandler{})
+
+	go func() {
+		if err := server.Run(ctx, serveMux); err != nil {
+			log.Fatal(err)
+		}
+	}()
+
+	q, err := server.Queue("order")
+	if err != nil {
+		log.Fatal(err)
+	}
+	messageID, err := q.PushJob(ctx, &OrderJob{OrderNo: "demo-1001"}, 0)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("published message id=%s", messageID)
 }
 ```
 
-If an enabled queue type is not bound in `ServeMux`, worker startup will fail.
+If an enabled queue type is not bound in `ServeMux`, worker startup fails.
+You can use this `messageID` later for management operations such as `GetMessage`, `CancelByID`, or `RetryByID`.
 
 
 Use file-loading only when you intentionally manage queue settings from external files.
