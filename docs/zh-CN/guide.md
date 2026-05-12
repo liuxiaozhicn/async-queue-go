@@ -188,6 +188,7 @@ flowchart LR
 
 ## 消息生命周期
 
+投递结果分支：
 ```mermaid
 flowchart LR
     P[Producer] -->|delay = 0| W[waiting]
@@ -204,17 +205,17 @@ flowchart LR
     R -->|Handler 返回 ACK| ACK[done]
     R -->|Handler 返回 DROP| DROP[dropped]
     R -->|Handler 返回 REQUEUE| W[waiting]
-    R -->|RETRY 或 error 且仍可重试| D[delayed]
-    R -->|RETRY 或 error 且重试次数耗尽| F[failed]
+    R -->|Handler 返回 RETRY 或 error 且仍可重试| D[delayed]
+    R -->|Handler 返回 RETRY 或 error 且重试次数耗尽| F[failed]
     R -->|超过 handleTimeout| T[timeout]
 ```
 
-人工恢复分支：
+失败或超时重试分支：
 
 ```mermaid
 flowchart LR
     T[timeout] -->|手动重装载 timeout 队列| W[waiting]
-    F -->|手动重装载 failed 队列| W
+    F[failed]  -->|手动重装载 failed 队列| W
 ```
 
 说明：
