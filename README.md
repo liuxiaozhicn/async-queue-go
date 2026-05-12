@@ -38,43 +38,6 @@ go get github.com/liuxiaozhicn/async-queue-go
 | `driver name` | `redis` | Backend registration name used by `WithDriver("redis", driver)` and the `driver` config field |
 | `channel` | `queue:order` | Backend storage namespace; producer and consumer must use the same channel |
 
-## Recommended Usage
-
-The primary path is:
-
-1. Start a `Server`
-2. Register handlers through `ServeMux`
-3. After `server.Run(...)` starts, get the queue instance through `server.Queue("order")`
-4. Publish through `Queue.PushJob(...)` or `Queue.PushMessage(...)`
-
-Example:
-
-```go
-server, err := asyncqueue.NewServer(
-    cfg,
-    asyncqueue.WithDriver("redis", queue.NewRedisDriver(redisClient)),
-)
-if err != nil {
-    log.Fatal(err)
-}
-
-go func() {
-    queueInstance, err := server.Queue("order")
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    _, err = queueInstance.PushJob(ctx, &OrderJob{
-        OrderNo: "demo-order-no",
-    }, 30)
-    if err != nil {
-        log.Printf("push failed: %v", err)
-    }
-}()
-```
-
-If a process is producer-only and does not run workers, use `NewAsyncQueue(...)` directly.
-
 ## Configuration Quick Reference
 
 Minimal in-code config:
@@ -123,20 +86,42 @@ Field reference:
 | `concurrent` | `int` | `1` | Max in-flight messages per consumer process. |
 | `shutdown_timeout` | `int` (seconds) | `30` | Graceful shutdown wait limit for queue workers/forwarder. |
 
-## Load From File (Optional)
+## Recommended Usage
 
-File loading is optional. Primary usage is still `NewServer(cfg, ...)`.
+The primary path is:
+
+1. Start a `Server`
+2. Register handlers through `ServeMux`
+3. After `server.Run(...)` starts, get the queue instance through `server.Queue("order")`
+4. Publish through `Queue.PushJob(...)` or `Queue.PushMessage(...)`
+
+Example:
 
 ```go
-cfg, err := asyncqueue.LoadConfig("config.json")
-if err != nil {
-    return err
-}
 server, err := asyncqueue.NewServer(
     cfg,
     asyncqueue.WithDriver("redis", queue.NewRedisDriver(redisClient)),
 )
+if err != nil {
+    log.Fatal(err)
+}
+
+go func() {
+    queueInstance, err := server.Queue("order")
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    _, err = queueInstance.PushJob(ctx, &OrderJob{
+        OrderNo: "demo-order-no",
+    }, 30)
+    if err != nil {
+        log.Printf("push failed: %v", err)
+    }
+}()
 ```
+
+If a process is producer-only and does not run workers, use `NewAsyncQueue(...)` directly.
 
 ## Examples
 

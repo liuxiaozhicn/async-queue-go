@@ -38,43 +38,6 @@ go get github.com/liuxiaozhicn/async-queue-go
 | `driver name` | `redis` | 后端驱动注册名，用于 `WithDriver("redis", driver)` 和配置中的 `driver` 字段 |
 | `channel` | `queue:order` | 后端存储命名空间；生产端和消费端必须一致 |
 
-## 推荐用法
-
-主推荐路径是：
-
-1. 启动 `Server`
-2. 通过 `ServeMux` 注册 handler
-3. `server.Run(...)` 启动后，通过 `server.Queue("order")` 获取队列实例
-4. 使用 `Queue.PushJob(...)` 或 `Queue.PushMessage(...)` 投递
-
-示例：
-
-```go
-server, err := asyncqueue.NewServer(
-    cfg,
-    asyncqueue.WithDriver("redis", queue.NewRedisDriver(redisClient)),
-)
-if err != nil {
-    log.Fatal(err)
-}
-
-go func() {
-    queueInstance, err := server.Queue("order")
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    _, err = queueInstance.PushJob(ctx, &OrderJob{
-        OrderNo: "demo-order-no",
-    }, 30)
-    if err != nil {
-        log.Printf("push failed: %v", err)
-    }
-}()
-```
-
-如果进程只负责生产、不启动 worker，可以直接使用 `NewAsyncQueue(...)`。
-
 ## 配置快速说明
 
 代码内最小配置示例：
@@ -123,20 +86,42 @@ cfg := &asyncqueue.Config{
 | `concurrent` | `int` | `1` | 每个 consumer 进程内的最大并发 in-flight 数。 |
 | `shutdown_timeout` | `int`（秒） | `30` | 队列 worker/forwarder 的优雅停机等待上限。 |
 
-## 从配置文件加载（可选）
+## 推荐用法
 
-文件加载是可选方式，主推荐仍然是 `NewServer(cfg, ...)`。
+主推荐路径是：
+
+1. 启动 `Server`
+2. 通过 `ServeMux` 注册 handler
+3. `server.Run(...)` 启动后，通过 `server.Queue("order")` 获取队列实例
+4. 使用 `Queue.PushJob(...)` 或 `Queue.PushMessage(...)` 投递
+
+示例：
 
 ```go
-cfg, err := asyncqueue.LoadConfig("config.json")
-if err != nil {
-    return err
-}
 server, err := asyncqueue.NewServer(
     cfg,
     asyncqueue.WithDriver("redis", queue.NewRedisDriver(redisClient)),
 )
+if err != nil {
+    log.Fatal(err)
+}
+
+go func() {
+    queueInstance, err := server.Queue("order")
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    _, err = queueInstance.PushJob(ctx, &OrderJob{
+        OrderNo: "demo-order-no",
+    }, 30)
+    if err != nil {
+        log.Printf("push failed: %v", err)
+    }
+}()
 ```
+
+如果进程只负责生产、不启动 worker，可以直接使用 `NewAsyncQueue(...)`。
 
 ## 示例
 
