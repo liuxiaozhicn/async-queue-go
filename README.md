@@ -75,6 +75,69 @@ go func() {
 
 If a process is producer-only and does not run workers, use `NewAsyncQueue(...)` directly.
 
+## Configuration Quick Reference
+
+Minimal in-code config:
+
+```go
+cfg := &asyncqueue.Config{
+    Queues: map[string]asyncqueue.QueueConfig{
+        "order": {
+            Driver:        "redis",
+            Channel:       "queue:order",
+            Enabled:       true,
+            PopTimeout:    3,
+            HandleTimeout: 180,
+            RetrySeconds:  []int{10, 30, 60, 120, 300},
+            MessageTTL:    864000,
+            MaxAttempts:   5,
+            Processes:     2,
+            Concurrent:    50,
+            ShutdownTimeout: 240,
+        },
+    },
+}
+```
+
+Key parameters:
+
+- `channel`: backend namespace; producer and consumer must match
+- `handle_timeout`: per-message processing timeout; usually `60~300` seconds
+- `retry_seconds`: retry backoff schedule; use an increasing sequence
+- `max_attempts`: max delivery attempts before moving to `failed`
+- `processes` and `concurrent`: throughput knobs; tune against downstream capacity
+
+Field reference:
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `driver` | `string` | `""` | Driver registration name. Must match `WithDriver("<name>", driver)`; e.g. `redis`. |
+| `channel` | `string` | queue name | Backend namespace/prefix. Keep stable once in production. |
+| `enabled` | `bool` | `true` | Whether this queue starts worker/forwarder in manager. |
+| `pop_timeout` | `int` (seconds) | `5` | Blocking pop timeout. Typical `1~5`; lower gives faster shutdown, higher reduces Redis QPS. |
+| `handle_timeout` | `int` (seconds) | `180` | Max processing window before timeout recovery; common `60~300`. |
+| `retry_seconds` | `[]int` (seconds) | `[5,10,30,60,120]` | Retry backoff sequence by attempt index; should be increasing. |
+| `message_ttl` | `int` (seconds) | `864000` | Message metadata TTL after creation/update; common `1~14` days. |
+| `max_attempts` | `int` | `5` | Max total attempts before moving to `failed`. |
+| `processes` | `int` | `1` | Consumer process count for this queue (goroutine workers). |
+| `concurrent` | `int` | `1` | Max in-flight messages per consumer process. |
+| `shutdown_timeout` | `int` (seconds) | `30` | Graceful shutdown wait limit for queue workers/forwarder. |
+
+## Load From File (Optional)
+
+File loading is optional. Primary usage is still `NewServer(cfg, ...)`.
+
+```go
+cfg, err := asyncqueue.LoadConfig("config.json")
+if err != nil {
+    return err
+}
+server, err := asyncqueue.NewServer(
+    cfg,
+    asyncqueue.WithDriver("redis", queue.NewRedisDriver(redisClient)),
+)
+```
+
 ## Examples
 
 - High-level example: [`examples/demo/main.go`](examples/demo/main.go)

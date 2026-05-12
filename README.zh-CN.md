@@ -75,6 +75,69 @@ go func() {
 
 如果进程只负责生产、不启动 worker，可以直接使用 `NewAsyncQueue(...)`。
 
+## 配置快速说明
+
+代码内最小配置示例：
+
+```go
+cfg := &asyncqueue.Config{
+    Queues: map[string]asyncqueue.QueueConfig{
+        "order": {
+            Driver:          "redis",
+            Channel:         "queue:order",
+            Enabled:         true,
+            PopTimeout:      3,
+            HandleTimeout:   180,
+            RetrySeconds:    []int{10, 30, 60, 120, 300},
+            MessageTTL:      864000,
+            MaxAttempts:     5,
+            Processes:       2,
+            Concurrent:      50,
+            ShutdownTimeout: 240,
+        },
+    },
+}
+```
+
+关键参数建议：
+
+- `channel`：后端命名空间，生产端和消费端必须一致
+- `handle_timeout`：单条消息处理超时，通常设在 `60~300` 秒
+- `retry_seconds`：重试退避序列，建议递增
+- `max_attempts`：进入 `failed` 前的最大尝试次数
+- `processes` / `concurrent`：吞吐调节参数，按下游承载能力调优
+
+字段说明：
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `driver` | `string` | `""` | 驱动注册名，必须和 `WithDriver("<name>", driver)` 一致，例如 `redis`。 |
+| `channel` | `string` | 队列名 | 后端命名空间/前缀；生产后建议保持稳定，避免迁移复杂度。 |
+| `enabled` | `bool` | `true` | 是否在 manager 启动该队列的 worker/forwarder。 |
+| `pop_timeout` | `int`（秒） | `5` | 阻塞拉取超时。常用 `1~5`；越小停机响应越快，越大 Redis 轮询压力越低。 |
+| `handle_timeout` | `int`（秒） | `180` | 单条消息处理最大时长，超时进入恢复流程；常用 `60~300`。 |
+| `retry_seconds` | `[]int`（秒） | `[5,10,30,60,120]` | 按尝试次数索引的退避序列，建议递增配置。 |
+| `message_ttl` | `int`（秒） | `864000` | 消息元数据 TTL；常用 `1~14` 天。 |
+| `max_attempts` | `int` | `5` | 进入 `failed` 前的最大总尝试次数。 |
+| `processes` | `int` | `1` | 该队列 consumer 进程数（goroutine worker 组）。 |
+| `concurrent` | `int` | `1` | 每个 consumer 进程内的最大并发 in-flight 数。 |
+| `shutdown_timeout` | `int`（秒） | `30` | 队列 worker/forwarder 的优雅停机等待上限。 |
+
+## 从配置文件加载（可选）
+
+文件加载是可选方式，主推荐仍然是 `NewServer(cfg, ...)`。
+
+```go
+cfg, err := asyncqueue.LoadConfig("config.json")
+if err != nil {
+    return err
+}
+server, err := asyncqueue.NewServer(
+    cfg,
+    asyncqueue.WithDriver("redis", queue.NewRedisDriver(redisClient)),
+)
+```
+
 ## 示例
 
 - 高层完整示例：[`examples/demo/main.go`](examples/demo/main.go)
