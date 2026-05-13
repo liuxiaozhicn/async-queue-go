@@ -113,7 +113,7 @@ func main() {
 		Queues: map[string]asyncqueue.QueueConfig{
 			"order": {
 				Driver:          "redis",
-				Channel:         "queue:order",
+				Channel:         "queue:demo",
 				Enabled:         true,
 				PopTimeout:      1,
 				HandleTimeout:   180,

@@ -11,7 +11,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func TestQueueCancelByID(t *testing.T) {
+func TestQueueCancel(t *testing.T) {
 	requireRedis(t)
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
@@ -41,7 +41,7 @@ func TestQueueCancelByID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ok, err := q.CancelByID(ctx, messageID)
+	ok, err := q.Cancel(ctx, messageID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestQueueCancelByID(t *testing.T) {
 	}
 }
 
-func TestQueueCancelByIDWaitingReturnsError(t *testing.T) {
+func TestQueueCancelWaitingReturnsError(t *testing.T) {
 	requireRedis(t)
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
@@ -96,7 +96,7 @@ func TestQueueCancelByIDWaitingReturnsError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ok, err := q.CancelByID(ctx, messageID)
+	ok, err := q.Cancel(ctx, messageID)
 	if !errors.Is(err, qpkg.ErrMessageAlreadyReadyForDispatch) {
 		t.Fatalf("expected ErrMessageAlreadyReadyForDispatch, got %v", err)
 	}
@@ -105,7 +105,7 @@ func TestQueueCancelByIDWaitingReturnsError(t *testing.T) {
 	}
 }
 
-func TestQueueCancelByIDReservedReturnsError(t *testing.T) {
+func TestQueueCancelReservedReturnsError(t *testing.T) {
 	requireRedis(t)
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
 	defer client.Close()
@@ -143,7 +143,7 @@ func TestQueueCancelByIDReservedReturnsError(t *testing.T) {
 		t.Fatalf("expected popped id %s, got %s", messageID, poppedID)
 	}
 
-	ok, err := q.CancelByID(ctx, messageID)
+	ok, err := q.Cancel(ctx, messageID)
 	if !errors.Is(err, qpkg.ErrMessageAlreadyInExecution) {
 		t.Fatalf("expected ErrMessageAlreadyInExecution, got %v", err)
 	}

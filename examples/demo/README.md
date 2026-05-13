@@ -7,7 +7,7 @@ This demo runs both producer and worker in one process.
 - Registering a queue handler with `asyncqueue.Server`
 - Pushing delayed jobs with `PushJob`
 - Reading message state by `message_id` via `GetMessage`
-- Retrying and canceling messages via `RetryByID` and `CancelByID`
+- Retrying and canceling messages via `RetryByID` and `Cancel`
 - Graceful shutdown with `SIGINT/SIGTERM`
 
 ## Configuration

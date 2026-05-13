@@ -115,7 +115,7 @@ func main() {
 ```
 
 If an enabled queue type is not bound in `ServeMux`, worker startup fails.
-You can use this `messageID` later for management operations such as `GetMessage`, `CancelByID`, or `RetryByID`.
+You can use this `messageID` later for management operations such as `GetMessage`, `Cancel`, or `RetryByID`.
 
 
 Use file-loading only when you intentionally manage queue settings from external files.
@@ -289,7 +289,7 @@ Notes:
 | Forwarder | reservation expired | `reserved -> timeout` | `timeout` |
 | Manual operation | `Reload("timeout")` | `timeout -> waiting` | `waiting` |
 | Manual operation | `Reload("failed")` | `failed -> waiting` | `waiting` |
-| Manual operation | `CancelByID` (only in `delayed`) | `delayed -> (removed)` | `canceled` |
+| Manual operation | `Cancel` (only in `delayed`) | `delayed -> (removed)` | `canceled` |
 
 ### Concurrency & Consistency Rules
 
@@ -358,7 +358,7 @@ The `{...}` hash tag keeps keys for one business queue in the same Redis Cluster
 | `PushMessage(ctx, msg, delaySeconds)` | Publish a raw message |
 | `Info(ctx)`                           | Read waiting / reserved / delayed / timeout / failed counts |
 | `GetMessage(ctx, id)`                 | Fetch message details |
-| `CancelByID(ctx, id)`                 | Cancel a delayed message before it enters dispatch, and mark it as `canceled` |
+| `Cancel(ctx, id)`                     | Cancel a delayed message before it enters dispatch, and mark it as `canceled` |
 | `RetryByID(ctx, id, delaySeconds)`    | Retry a message with a new delay |
 | `Reload(ctx, "timeout" or "failed")`  | Move timeout or failed messages back to waiting |
 | `Flush(ctx, queueName)`               | Clear one internal queue |
@@ -441,7 +441,7 @@ id, err := queueInstance.PushJob(ctx, job, 0)
 ### What does `DROP` mean?
 
 - `DROP` is a consumer result. It means the business logic has decided not to continue processing the message, and the message status becomes `dropped`.
-### How does `CancelByID` behave?
-- `CancelByID` is for giving up dispatch while the message is still in `delayed`.
+### How does `Cancel` behave?
+- `Cancel` is for giving up dispatch while the message is still in `delayed`.
 - If the message is already in `waiting`, it has become dispatch-ready and cancellation is rejected with `ErrMessageAlreadyReadyForDispatch`.
 - If the message is already in `reserved`, it has been claimed by a consumer and cancellation is rejected with `ErrMessageAlreadyInExecution`.

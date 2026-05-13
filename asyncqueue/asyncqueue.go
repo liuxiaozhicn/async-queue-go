@@ -153,12 +153,18 @@ func (q *Queue) GetMessage(ctx context.Context, id string) (*core.Message, error
 	return q.driver.Get(ctx, q.channel, id)
 }
 
-func (q *Queue) CancelByID(ctx context.Context, id string) (bool, error) {
+func (q *Queue) Cancel(ctx context.Context, id string) (bool, error) {
 	if q == nil || q.driver == nil {
 		return false, errors.New("queue is nil")
 	}
 	if id == "" {
 		return false, errors.New("id is empty")
 	}
-	return q.driver.Cancel(ctx, q.channel, id)
+	ok, err := q.driver.Cancel(ctx, q.channel, id)
+	if err != nil {
+		q.logger.Info(ctx, "[Producer:%s] CANCEL|ID:%s success:false error:%v", q.name, id, err)
+		return false, err
+	}
+	q.logger.Info(ctx, "[Producer:%s] CANCEL|ID:%s success:%t", q.name, id, ok)
+	return ok, nil
 }

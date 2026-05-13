@@ -27,7 +27,7 @@ type consumerOptions struct {
 func defaultConsumerOptions() consumerOptions {
 	return consumerOptions{
 		concurrentLimit: 10,
-		PopTimeout:      3 * time.Second,
+		PopTimeout:      1 * time.Second,
 		handleTimeout:   180 * time.Second,
 		retrySeconds:    []int{30, 90, 180, 300},
 		messageTTL:      defaultConsumerMessageTTLSeconds,

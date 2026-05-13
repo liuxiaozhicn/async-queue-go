@@ -115,7 +115,7 @@ func main() {
 ```
 
 如果启用队列对应的任务类型没有在 `ServeMux` 绑定，worker 启动会失败。
-你可以保留这个 `messageID`，后续用于 `GetMessage`、`CancelByID`、`RetryByID` 等管理操作。
+你可以保留这个 `messageID`，后续用于 `GetMessage`、`Cancel`、`RetryByID` 等管理操作。
 
 ## 配置项说明
 
@@ -286,7 +286,7 @@ flowchart LR
 | 转发 | 保留超时 | `reserved -> timeout` | `timeout` |
 | 人工操作 | `Reload("timeout")` | `timeout -> waiting` | `waiting` |
 | 人工操作 | `Reload("failed")` | `failed -> waiting` | `waiting` |
-| 人工操作 | `CancelByID`（仅 `delayed`） | `delayed -> (移除)` | `canceled` |
+| 人工操作 | `Cancel`（仅 `delayed`） | `delayed -> (移除)` | `canceled` |
 
 ### 并发与一致性规则
 
@@ -355,7 +355,7 @@ Redis 驱动会按 `channel` 生成一组 key：
 | `PushMessage(ctx, msg, delaySeconds)` | 投递原始消息 |
 | `Info(ctx)`                           | 获取 waiting / reserved / delayed / timeout / failed 统计 |
 | `GetMessage(ctx, id)`                 | 获取消息详情 |
-| `CancelByID(ctx, id)`                 | 取消仍处于 `delayed`、尚未进入调度阶段的消息，并把状态标记为 `canceled` |
+| `Cancel(ctx, id)`                     | 取消仍处于 `delayed`、尚未进入调度阶段的消息，并把状态标记为 `canceled` |
 | `RetryByID(ctx, id, delaySeconds)`    | 重新设定延迟后重试 |
 | `Reload(ctx, "timeout" OR "failed")`  | 把 timeout 或 failed 消息重新放回 waiting |
 | `Flush(ctx, queueName)`               | 清空一个内部队列 |
@@ -438,7 +438,7 @@ id, err := queueInstance.PushJob(ctx, job, 0)
 ### `DROP` 的语义是什么？
 
 - `DROP` 是消费结果，表示业务明确决定不再继续处理这条消息，消息状态会变成 `dropped`。
-### `CancelByID` 的行为是什么？
-- `CancelByID` 用于消息还处于 `delayed` 阶段时主动放弃调度。
+### `Cancel` 的行为是什么？
+- `Cancel` 用于消息还处于 `delayed` 阶段时主动放弃调度。
 - 如果消息已经进入 `waiting`，说明它已经进入待调度阶段，会返回 `ErrMessageAlreadyReadyForDispatch`，不再允许取消。
 - 如果消息已经进入 `reserved`，说明它已经被消费者取走并进入执行阶段，会返回 `ErrMessageAlreadyInExecution`。
