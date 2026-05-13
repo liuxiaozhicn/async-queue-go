@@ -225,7 +225,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/order/create", orderCreate)
-	mux.HandleFunc("/payment/callback", paymentCallback)
+	mux.HandleFunc("/order/callback", paymentCallback)
 
 	httpServer := &http.Server{Addr: defaultHTTPAddr, Handler: mux}
 

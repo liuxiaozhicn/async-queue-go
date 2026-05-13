@@ -3,7 +3,7 @@
 This demo keeps only 2 business routes:
 
 - `POST /order/create`: create order and schedule active payment-query task
-- `POST /payment/callback`: simulate callback; if callback arrives first, cancel the scheduled query task
+- `POST /order/callback`: simulate callback; if callback arrives first, cancel the scheduled query task
 
 It uses a dedicated Redis channel prefix: `order:payment`.
 
@@ -36,7 +36,7 @@ Later callback uses this scheduled message id to cancel pending query.
 Payment callback:
 
 ```bash
-curl -s -X POST http://127.0.0.1:8080/payment/callback \
+curl -s -X POST http://127.0.0.1:8080/order/callback \
   -H "Content-Type: application/json" \
   -d '{"order_no":"ORD-1001"}'
 ```

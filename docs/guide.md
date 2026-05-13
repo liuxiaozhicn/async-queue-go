@@ -19,9 +19,9 @@ Core terms:
 
 Current repository provides Redis implementation via `pkg/queue.Driver`.
 
-## Clone and Run (Step by Step)
+## Quick Start
 
-Follow these exact steps for first run:
+Use the steps below to run the `order` example end-to-end quickly:
 
 1. Clone repository and enter project directory:
 ```bash
@@ -51,21 +51,17 @@ Continue after `PONG`.
 ```bash
 go mod tidy
 ```
-5. Run basic demo:
-```bash
-go run ./examples/demo/basic
-```
-6. In another terminal, run order HTTP demo:
+5. Run order HTTP demo:
 ```bash
 go run ./examples/demo/order
 ```
-7. Create an order (triggers delayed query task):
+6. Create an order (triggers delayed query task):
 ```bash
 curl -X POST http://127.0.0.1:8080/order/create \
   -H "Content-Type: application/json" \
   -d '{"order_no":"ORD-1001"}'
 ```
-8. Simulate payment callback (cancels pending query task):
+7. Simulate payment callback (cancels pending query task):
 ```bash
 curl -X POST http://127.0.0.1:8080/order/callback \
   -H "Content-Type: application/json" \

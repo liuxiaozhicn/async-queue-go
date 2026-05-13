@@ -19,9 +19,9 @@
 
 当前仓库内置 Redis 实现，运行时统一抽象在 `pkg/queue.Driver` 之下。
 
-## 从克隆到跑起来（一步一步）
+## 快速开始
 
-首次接入按下面步骤直接操作：
+以下步骤用于直接运行 `order` 示例，快速验证完整链路：
 
 1. 克隆代码并进入目录：
 ```bash
@@ -51,21 +51,17 @@ redis-cli -h 127.0.0.1 -p 6379 ping
 ```bash
 go mod tidy
 ```
-5. 运行基础示例：
-```bash
-go run ./examples/demo/basic
-```
-6. 另开终端运行订单 HTTP 示例：
+5. 运行订单 HTTP 示例：
 ```bash
 go run ./examples/demo/order
 ```
-7. 创建订单（会触发延迟查询任务）：
+6. 创建订单（会触发延迟查询任务）：
 ```bash
 curl -X POST http://127.0.0.1:8080/order/create \
   -H "Content-Type: application/json" \
   -d '{"order_no":"ORD-1001"}'
 ```
-8. 模拟支付回调（取消待执行的查询任务）：
+7. 模拟支付回调（取消待执行的查询任务）：
 ```bash
 curl -X POST http://127.0.0.1:8080/order/callback \
   -H "Content-Type: application/json" \
