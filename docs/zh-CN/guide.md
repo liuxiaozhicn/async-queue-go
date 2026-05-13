@@ -12,6 +12,16 @@
 
 当前仓库内置 Redis 实现，运行时统一抽象在 `pkg/queue.Driver` 之下。
 
+## 新手阅读路径
+
+第一次接入建议按下面顺序阅读：
+
+1. `5 分钟快速上手`（先跑通）
+2. `Task 与 Message 关系`（理解投递对象与运行时消息）
+3. `队列管理能力`（查看/重装载/取消）
+4. `消息生命周期`（深入状态流转）
+5. `架构说明` 与 `自定义驱动扩展`（进阶）
+
 ### 可靠性保证与边界
 
 - 原子性：
@@ -32,6 +42,22 @@
 > [!WARNING]
 > 这不等于 exactly-once，也不代表基础设施故障下绝对不丢失。
 > 外部破坏性操作与存储层数据丢失不在运行时保证范围内。
+
+## 5 分钟快速上手
+
+最小步骤：
+
+1. 启动 Redis（`127.0.0.1:6379`）。
+2. 注册驱动：`WithDriver("redis", queue.NewRedisDriver(client))`。
+3. 在 `Config.Queues` 定义一个队列（例如 key 为 `order`）。
+4. 用同名队列 key 绑定 handler：`serveMux.Handle("order", handler)`。
+5. 启动服务：`server.Run(ctx, serveMux)`。
+6. 投递任务：`server.Queue("order").PushTask(...)`。
+
+可直接运行的示例：
+
+- 基础示例：[`examples/demo/basic/main.go`](/Users/liuxiaozhi/Desktop/async-queue-go/examples/demo/basic/main.go)
+- 业务场景示例：[`examples/demo/order/main.go`](/Users/liuxiaozhi/Desktop/async-queue-go/examples/demo/order/main.go)
 
 ## 配置示例
 

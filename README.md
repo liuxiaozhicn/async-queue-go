@@ -59,6 +59,19 @@ go get github.com/liuxiaozhicn/async-queue-go
 | `driver` | `redis` | Backend registration key used by `WithDriver("redis", driver)` and the `driver` config field |
 | `channel` | `queue:order` | Logical queue identifier (key prefix) in the driver backend; producer and consumer must use the same channel |
 
+## Quick Start
+
+1. Start Redis at `127.0.0.1:6379`.
+2. Create `Config` with one queue key (for example `order`).
+3. Register driver: `WithDriver("redis", queue.NewRedisDriver(client))`.
+4. Bind handler with the same queue key: `serveMux.Handle("order", handler)`.
+5. Run server and publish via `server.Queue("order").PushTask(...)`.
+
+New users can start from:
+
+- [`examples/demo/basic/main.go`](/Users/liuxiaozhi/Desktop/async-queue-go/examples/demo/basic/main.go)
+- [`examples/demo/order/main.go`](/Users/liuxiaozhi/Desktop/async-queue-go/examples/demo/order/main.go)
+
 ## Configuration Quick Reference
 
 Minimal in-code config:

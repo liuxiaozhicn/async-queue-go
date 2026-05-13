@@ -12,6 +12,16 @@
 
 The current repository ships with a Redis implementation and keeps the runtime behind `pkg/queue.Driver`.
 
+## Start Here (Beginner Path)
+
+If this is your first time using the project, read in this order:
+
+1. `Quick Start in 5 Minutes` (immediate runnable path)
+2. `Task and Message Relationship` (what you publish vs what runtime stores)
+3. `Queue Management APIs` (how to inspect/reload/cancel messages)
+4. `Message Lifecycle` (deeper runtime flow and state transitions)
+5. `Architecture` and `Custom Driver Extension` (advanced understanding)
+
 ### Reliability Guarantees and Boundaries
 
 - Atomicity:
@@ -32,6 +42,22 @@ The current repository ships with a Redis implementation and keeps the runtime b
 > [!WARNING]
 > Do not interpret this as exactly-once or absolute no-loss across infrastructure failures.
 > External destructive operations and storage-level data loss are out of runtime guarantees.
+
+## Quick Start in 5 Minutes
+
+Minimal steps:
+
+1. Start Redis (`127.0.0.1:6379`).
+2. Register one driver: `WithDriver("redis", queue.NewRedisDriver(client))`.
+3. Define one queue in `Config.Queues` (for example key `order`).
+4. Bind handler using the same queue key: `serveMux.Handle("order", handler)`.
+5. Run server: `server.Run(ctx, serveMux)`.
+6. Publish tasks: `server.Queue("order").PushTask(...)`.
+
+Recommended runnable examples:
+
+- Basic: [`examples/demo/basic/main.go`](/Users/liuxiaozhi/Desktop/async-queue-go/examples/demo/basic/main.go)
+- Business scenario: [`examples/demo/order/main.go`](/Users/liuxiaozhi/Desktop/async-queue-go/examples/demo/order/main.go)
 
 ## Configuration Example
 

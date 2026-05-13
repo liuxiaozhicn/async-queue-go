@@ -59,6 +59,19 @@ go get github.com/liuxiaozhicn/async-queue-go
 | `driver` | `redis` | 后端驱动注册 key，用于 `WithDriver("redis", driver)` 和配置中的 `driver` 字段 |
 | `channel` | `queue:order` | 队列在驱动中的逻辑队列标识（key 前缀）；生产端和消费端必须一致 |
 
+## 快速上手
+
+1. 启动 Redis（`127.0.0.1:6379`）。
+2. 构建一个最小 `Config`（例如队列 key 为 `order`）。
+3. 注册驱动：`WithDriver("redis", queue.NewRedisDriver(client))`。
+4. 用同名队列 key 绑定 handler：`serveMux.Handle("order", handler)`。
+5. 启动服务并通过 `server.Queue("order").PushTask(...)` 投递任务。
+
+新用户建议直接从下面示例开始：
+
+- [`examples/demo/basic/main.go`](/Users/liuxiaozhi/Desktop/async-queue-go/examples/demo/basic/main.go)
+- [`examples/demo/order/main.go`](/Users/liuxiaozhi/Desktop/async-queue-go/examples/demo/order/main.go)
+
 ## 配置快速说明
 
 代码内最小配置示例：
