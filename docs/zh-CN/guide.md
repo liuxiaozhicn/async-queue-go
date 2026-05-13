@@ -28,29 +28,44 @@
 git clone https://github.com/liuxiaozhicn/async-queue-go.git
 cd async-queue-go
 ```
-2. 启动 Redis（本地 `127.0.0.1:6379`），例如：
+2. 启动 Redis（任选一种）：
+   - Docker（推荐）：
 ```bash
-docker run --name asyncq-redis -p 6379:6379 -d redis:7
+docker run --name asyncq-redis \
+  -p 6379:6379 \
+  -e TZ=Asia/Shanghai \
+  -d redis:7 \
+  redis-server --appendonly yes
 ```
-3. 下载依赖：
+   - 已有容器直接启动：
+```bash
+docker start asyncq-redis
+```
+   - 本机/远程 Redis：确保服务可达并监听正确地址。
+3. 连通性检查（建议）：
+```bash
+redis-cli -h 127.0.0.1 -p 6379 ping
+```
+返回 `PONG` 再继续。
+4. 下载依赖：
 ```bash
 go mod tidy
 ```
-4. 运行基础示例：
+5. 运行基础示例：
 ```bash
 go run ./examples/demo/basic
 ```
-5. 另开终端运行订单 HTTP 示例：
+6. 另开终端运行订单 HTTP 示例：
 ```bash
 go run ./examples/demo/order
 ```
-6. 创建订单（会触发延迟查询任务）：
+7. 创建订单（会触发延迟查询任务）：
 ```bash
 curl -X POST http://127.0.0.1:8080/order/create \
   -H "Content-Type: application/json" \
   -d '{"order_no":"ORD-1001"}'
 ```
-7. 模拟支付回调（取消待执行的查询任务）：
+8. 模拟支付回调（取消待执行的查询任务）：
 ```bash
 curl -X POST http://127.0.0.1:8080/order/callback \
   -H "Content-Type: application/json" \
@@ -94,7 +109,7 @@ curl -X POST http://127.0.0.1:8080/order/callback \
 
 最小步骤：
 
-1. 启动 Redis（`127.0.0.1:6379`）。
+1. 启动 Redis（任选一种）并确认 `redis-cli ping` 返回 `PONG`。
 2. 注册驱动：`WithDriver("redis", queue.NewRedisDriver(client))`。
 3. 在 `Config.Queues` 定义一个队列（例如 key 为 `order`）。
 4. 用同名队列 key 绑定 handler：`serveMux.Handle("order", handler)`。

@@ -28,29 +28,44 @@ Follow these exact steps for first run:
 git clone https://github.com/liuxiaozhicn/async-queue-go.git
 cd async-queue-go
 ```
-2. Start Redis (local `127.0.0.1:6379`), for example:
+2. Start Redis (choose one):
+   - Docker (recommended):
 ```bash
-docker run --name asyncq-redis -p 6379:6379 -d redis:7
+docker run --name asyncq-redis \
+  -p 6379:6379 \
+  -e TZ=Asia/Shanghai \
+  -d redis:7 \
+  redis-server --appendonly yes
 ```
-3. Download dependencies:
+   - Reuse existing container:
+```bash
+docker start asyncq-redis
+```
+   - Local/remote Redis: ensure it is reachable with the expected address.
+3. Connectivity check (recommended):
+```bash
+redis-cli -h 127.0.0.1 -p 6379 ping
+```
+Continue after `PONG`.
+4. Download dependencies:
 ```bash
 go mod tidy
 ```
-4. Run basic demo:
+5. Run basic demo:
 ```bash
 go run ./examples/demo/basic
 ```
-5. In another terminal, run order HTTP demo:
+6. In another terminal, run order HTTP demo:
 ```bash
 go run ./examples/demo/order
 ```
-6. Create an order (triggers delayed query task):
+7. Create an order (triggers delayed query task):
 ```bash
 curl -X POST http://127.0.0.1:8080/order/create \
   -H "Content-Type: application/json" \
   -d '{"order_no":"ORD-1001"}'
 ```
-7. Simulate payment callback (cancels pending query task):
+8. Simulate payment callback (cancels pending query task):
 ```bash
 curl -X POST http://127.0.0.1:8080/order/callback \
   -H "Content-Type: application/json" \
@@ -94,7 +109,7 @@ If this is your first time using the project, read in this order:
 
 Minimal steps:
 
-1. Start Redis (`127.0.0.1:6379`).
+1. Start Redis (any supported way) and make sure `redis-cli ping` returns `PONG`.
 2. Register one driver: `WithDriver("redis", queue.NewRedisDriver(client))`.
 3. Define one queue in `Config.Queues` (for example key `order`).
 4. Bind handler using the same queue key: `serveMux.Handle("order", handler)`.

@@ -61,11 +61,29 @@ go get github.com/liuxiaozhicn/async-queue-go
 
 ## 快速上手
 
-1. 启动 Redis（`127.0.0.1:6379`）。
-2. 构建一个最小 `Config`（例如队列 key 为 `order`）。
-3. 注册驱动：`WithDriver("redis", queue.NewRedisDriver(client))`。
-4. 用同名队列 key 绑定 handler：`serveMux.Handle("order", handler)`。
-5. 启动服务并通过 `server.Queue("order").PushTask(...)` 投递任务。
+1. 启动 Redis（任选一种）：
+   - Docker（推荐）：
+   ```bash
+   docker run --name asyncq-redis \
+     -p 6379:6379 \
+     -e TZ=Asia/Shanghai \
+     -d redis:7 \
+     redis-server --appendonly yes
+   ```
+   - 已有容器直接启动：
+   ```bash
+   docker start asyncq-redis
+   ```
+   - 本机/远程 Redis：确保服务可达并监听正确地址。
+2. 连通性检查（建议）：
+   ```bash
+   redis-cli -h 127.0.0.1 -p 6379 ping
+   ```
+   返回 `PONG` 再继续。
+3. 构建一个最小 `Config`（例如队列 key 为 `order`）。
+4. 注册驱动：`WithDriver("redis", queue.NewRedisDriver(client))`。
+5. 用同名队列 key 绑定 handler：`serveMux.Handle("order", handler)`。
+6. 启动服务并通过 `server.Queue("order").PushTask(...)` 投递任务。
 
 新用户建议直接从下面示例开始：
 

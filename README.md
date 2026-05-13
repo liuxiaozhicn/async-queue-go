@@ -61,11 +61,29 @@ go get github.com/liuxiaozhicn/async-queue-go
 
 ## Quick Start
 
-1. Start Redis at `127.0.0.1:6379`.
-2. Create `Config` with one queue key (for example `order`).
-3. Register driver: `WithDriver("redis", queue.NewRedisDriver(client))`.
-4. Bind handler with the same queue key: `serveMux.Handle("order", handler)`.
-5. Run server and publish via `server.Queue("order").PushTask(...)`.
+1. Start Redis (choose one):
+   - Docker (recommended):
+   ```bash
+   docker run --name asyncq-redis \
+     -p 6379:6379 \
+     -e TZ=Asia/Shanghai \
+     -d redis:7 \
+     redis-server --appendonly yes
+   ```
+   - Reuse existing container:
+   ```bash
+   docker start asyncq-redis
+   ```
+   - Local/remote Redis: ensure it is reachable with the expected address.
+2. Connectivity check (recommended):
+   ```bash
+   redis-cli -h 127.0.0.1 -p 6379 ping
+   ```
+   Continue after `PONG`.
+3. Create `Config` with one queue key (for example `order`).
+4. Register driver: `WithDriver("redis", queue.NewRedisDriver(client))`.
+5. Bind handler with the same queue key: `serveMux.Handle("order", handler)`.
+6. Run server and publish via `server.Queue("order").PushTask(...)`.
 
 New users can start from:
 
