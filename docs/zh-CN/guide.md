@@ -19,7 +19,6 @@
 - 支持并发消费与自动重启
 - 基于 Redis Lua 的原子状态流转，支持超时恢复（`reserved -> timeout`）并提供至少一次投递语义
 - 提供查询、重试、重装载、清理等管理能力
-- 支持 JSON / YAML 配置
 - 支持优雅停机
 
 可靠性关键特性：
@@ -63,6 +62,7 @@ docker start asyncq-redis
 redis-cli -h 127.0.0.1 -p 6379 ping
 ```
 返回 `PONG` 再继续。
+
 4. 下载依赖：
 ```bash
 go mod tidy

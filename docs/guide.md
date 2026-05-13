@@ -4,20 +4,33 @@
 
 ## Overview
 
-`async-queue-go` is an async task queue with Redis driver support, focused on:
+`async-queue-go` is an async task queue library for Go services with a built-in Redis driver and an extensible `Driver` abstraction.
 
-- clear queue/handler binding
-- atomic message state transitions (Lua)
-- at-least-once delivery with timeout recovery
-- simple integration from `NewServer` to task publishing
+It provides:
 
-Core terms:
+- High-level runtime APIs: `asyncqueue.Server`, `Manager`, `Queue`
+- Low-level building blocks: `pkg/queue.Driver`, `Consumer`, `Forwarder`
+- At-least-once delivery semantics with delay, retry, timeout recovery, and failure reload
 
-- `queue`: business queue key such as `order`
-- `driver`: backend driver registration key such as `redis`
-- `channel`: storage key prefix for this queue, such as `queue:order`
+Features:
 
-Current repository provides Redis implementation via `pkg/queue.Driver`.
+- Pluggable driver registration by name via `driver`
+- Built-in Redis driver implementation
+- Concurrent consumption with automatic restart support
+- Redis Lua-based atomic state transitions, timeout recovery (`reserved -> timeout`), and at-least-once delivery semantics
+- Management capabilities: query, retry, reload, and flush
+- Graceful shutdown support
+
+Reliability highlights:
+
+- Atomic state commits: `Pop/Ack/Retry/Requeue/Drop/Fail/Cancel` are executed via Redis Lua scripts; multi-key changes in a single script are atomic.
+- Timeout fault tolerance: if a consumer crashes or hangs after claiming a message, the forwarder moves timed-out messages from `reserved` to `timeout`.
+- Manual reload: `Reload("timeout")` / `Reload("failed")` put backlogged messages back into `waiting`.
+- Loss semantics: the system provides at-least-once delivery (not exactly-once). Under reasonable Redis persistence and TTL settings, no silent loss occurs in normal flow; external destructive conditions (e.g. manual `Flush/Delete`, TTL expiration, Redis data loss) can still cause loss.
+
+Summary:
+
+This is an async task queue focused on practical reliability: Lua scripts guarantee atomic state transitions for critical steps, timeout recovery and reload provide recoverability, and at-least-once semantics ensure delivery reliability. The business layer must handle duplicate deliveries through idempotent handlers.
 
 ## Quick Start
 
@@ -323,8 +336,6 @@ func main() {
 If an enabled queue type is not bound in `ServeMux`, worker startup fails.
 You can use this `messageID` later for management operations such as `GetMessage`, `Cancel`, or `RetryByID`.
 
-
-Use file-loading only when you intentionally manage queue settings from external files.
 
 ## Task and Message Relationship
 
