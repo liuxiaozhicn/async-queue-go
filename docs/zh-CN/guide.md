@@ -4,20 +4,34 @@
 
 ## 概览
 
-`async-queue-go` 是一个基于 Redis 驱动的异步任务队列，重点是：
+`async-queue-go` 是一个面向 Go 服务的异步任务队列库，当前内置 Redis 驱动，并保留了可扩展的 `Driver` 抽象。
 
-- 队列与处理器绑定清晰
-- 消息状态流转原子化（Lua）
-- 至少一次投递 + 超时容错恢复
-- 从 `NewServer` 到投递任务接入路径简单
+它提供：
 
-核心术语：
+- 高层运行时 API：`asyncqueue.Server`、`Manager`、`Queue`
+- 低层构建块：`pkg/queue.Driver`、`Consumer`、`Forwarder`
+- 至少一次投递语义，支持延迟、重试、超时恢复和失败重装载
 
-- `queue`：业务队列 key，例如 `order`
-- `driver`：后端驱动注册 key，例如 `redis`
-- `channel`：该队列在存储中的 key 前缀，例如 `queue:order`
+特性：
 
-当前仓库内置 Redis 实现，运行时统一抽象在 `pkg/queue.Driver` 之下。
+- 按 `driver` 注册可插拔驱动
+- 内置 Redis 驱动实现
+- 支持并发消费与自动重启
+- 基于 Redis Lua 的原子状态流转，支持超时恢复（`reserved -> timeout`）并提供至少一次投递语义
+- 提供查询、重试、重装载、清理等管理能力
+- 支持 JSON / YAML 配置
+- 支持优雅停机
+
+可靠性关键特性：
+
+- 原子状态提交：`Pop/Ack/Retry/Requeue/Drop/Fail/Cancel` 等动作通过 Redis Lua 脚本完成，多 key 变更在单次脚本内原子生效。
+- 超时容错：consumer 取走消息后若崩溃或卡死，forwarder 会把超时消息从 `reserved` 转移到 `timeout`。
+- 人工重装载：可通过 `Reload("timeout")` / `Reload("failed")` 把积压消息重新放回 `waiting`。
+- 消息丢失语义：系统语义是至少一次投递（at-least-once），不是 exactly-once。在 Redis 持久化和 TTL 配置合理前提下，不会在正常路径中无声丢消息；外部破坏性条件下仍可能丢失（如人工 `Flush/Delete`、TTL 到期删除、Redis 数据丢失）。
+
+总结：
+
+这是一个以“可落地可靠性”为核心的异步任务队列：用 Lua 保证关键状态原子流转，用超时回收和重装载保障可恢复性，用 at-least-once 语义保障投递可靠性。业务侧需要通过幂等处理来承接重复投递场景。
 
 ## 快速开始
 
