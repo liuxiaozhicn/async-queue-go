@@ -4,13 +4,60 @@
 
 ## 概览
 
-`async-queue-go` 把业务路由和后端驱动做了分层：
+`async-queue-go` 是一个基于 Redis 驱动的异步任务队列，重点是：
+
+- 队列与处理器绑定清晰
+- 消息状态流转原子化（Lua）
+- 至少一次投递 + 超时容错恢复
+- 从 `NewServer` 到投递任务接入路径简单
+
+核心术语：
 
 - `queue`：业务队列 key，例如 `order`
 - `driver`：后端驱动注册 key，例如 `redis`
-- `channel`：后端存储命名空间，例如 `queue:order`
+- `channel`：该队列在存储中的 key 前缀，例如 `queue:order`
 
 当前仓库内置 Redis 实现，运行时统一抽象在 `pkg/queue.Driver` 之下。
+
+## 从克隆到跑起来（一步一步）
+
+首次接入按下面步骤直接操作：
+
+1. 克隆代码并进入目录：
+```bash
+git clone https://github.com/liuxiaozhicn/async-queue-go.git
+cd async-queue-go
+```
+2. 启动 Redis（本地 `127.0.0.1:6379`），例如：
+```bash
+docker run --name asyncq-redis -p 6379:6379 -d redis:7
+```
+3. 下载依赖：
+```bash
+go mod tidy
+```
+4. 运行基础示例：
+```bash
+go run ./examples/demo/basic
+```
+5. 另开终端运行订单 HTTP 示例：
+```bash
+go run ./examples/demo/order
+```
+6. 创建订单（会触发延迟查询任务）：
+```bash
+curl -X POST http://127.0.0.1:8080/order/create \
+  -H "Content-Type: application/json" \
+  -d '{"order_no":"ORD-1001"}'
+```
+7. 模拟支付回调（取消待执行的查询任务）：
+```bash
+curl -X POST http://127.0.0.1:8080/order/callback \
+  -H "Content-Type: application/json" \
+  -d '{"order_no":"ORD-1001"}'
+```
+
+如果不回调，查询任务会按重试策略继续，直到成功或失败。
 
 ## 新手阅读路径
 
@@ -58,6 +105,23 @@
 
 - 基础示例：[`examples/demo/basic/main.go`](/Users/liuxiaozhi/Desktop/async-queue-go/examples/demo/basic/main.go)
 - 业务场景示例：[`examples/demo/order/main.go`](/Users/liuxiaozhi/Desktop/async-queue-go/examples/demo/order/main.go)
+
+### 首次运行自检
+
+启动后可按下面检查是否跑通：
+
+1. `server.Run(...)` 未立即报错退出。
+2. 每个启用队列都完成了 handler 绑定。
+3. 投递返回非空 `messageID`。
+4. `Info` 中 `waiting/reserved/delayed` 计数有符合预期的变化。
+
+### 新手最常见问题
+
+| 现象 | 常见原因 | 处理方式 |
+| --- | --- | --- |
+| worker 启动即失败 | 启用队列缺少 handler 绑定 | 确保每个启用队列 key 都有 `ServeMux.Handle(<queue>, <handler>)` |
+| 投递成功但始终不消费 | `Config.Queues` key 与 `Handle`/`server.Queue` 使用的 key 不一致 | 配置、绑定、投递三处统一使用完全一致的队列 key |
+| 消息频繁进入 `timeout` | `handle_timeout` 小于真实处理耗时 | 按 handler 的 p99 耗时上调 `handle_timeout` |
 
 ## 配置示例
 

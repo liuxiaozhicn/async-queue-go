@@ -4,13 +4,60 @@
 
 ## Overview
 
-`async-queue-go` separates business routing from backend wiring:
+`async-queue-go` is an async task queue with Redis driver support, focused on:
+
+- clear queue/handler binding
+- atomic message state transitions (Lua)
+- at-least-once delivery with timeout recovery
+- simple integration from `NewServer` to task publishing
+
+Core terms:
 
 - `queue`: business queue key such as `order`
-- `driver`: backend registration key such as `redis`
-- `channel`: backend storage namespace such as `queue:order`
+- `driver`: backend driver registration key such as `redis`
+- `channel`: storage key prefix for this queue, such as `queue:order`
 
-The current repository ships with a Redis implementation and keeps the runtime behind `pkg/queue.Driver`.
+Current repository provides Redis implementation via `pkg/queue.Driver`.
+
+## Clone and Run (Step by Step)
+
+Follow these exact steps for first run:
+
+1. Clone repository and enter project directory:
+```bash
+git clone https://github.com/liuxiaozhicn/async-queue-go.git
+cd async-queue-go
+```
+2. Start Redis (local `127.0.0.1:6379`), for example:
+```bash
+docker run --name asyncq-redis -p 6379:6379 -d redis:7
+```
+3. Download dependencies:
+```bash
+go mod tidy
+```
+4. Run basic demo:
+```bash
+go run ./examples/demo/basic
+```
+5. In another terminal, run order HTTP demo:
+```bash
+go run ./examples/demo/order
+```
+6. Create an order (triggers delayed query task):
+```bash
+curl -X POST http://127.0.0.1:8080/order/create \
+  -H "Content-Type: application/json" \
+  -d '{"order_no":"ORD-1001"}'
+```
+7. Simulate payment callback (cancels pending query task):
+```bash
+curl -X POST http://127.0.0.1:8080/order/callback \
+  -H "Content-Type: application/json" \
+  -d '{"order_no":"ORD-1001"}'
+```
+
+If callback does not happen, query task will continue by retry policy until completion/failure.
 
 ## Start Here (Beginner Path)
 
@@ -58,6 +105,23 @@ Recommended runnable examples:
 
 - Basic: [`examples/demo/basic/main.go`](/Users/liuxiaozhi/Desktop/async-queue-go/examples/demo/basic/main.go)
 - Business scenario: [`examples/demo/order/main.go`](/Users/liuxiaozhi/Desktop/async-queue-go/examples/demo/order/main.go)
+
+### First-Run Validation
+
+After startup, use this checklist:
+
+1. `server.Run(...)` does not return immediate error.
+2. A handler is registered for every enabled queue.
+3. Publishing returns a non-empty `messageID`.
+4. Queue metrics (`Info`) show movement in `waiting/reserved/delayed` as expected.
+
+### Most Common Beginner Mistakes
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| Worker fails at startup | Missing handler binding for an enabled queue | Ensure `ServeMux.Handle(<queue>, <handler>)` exists for each enabled queue key |
+| Task published but never consumed | Queue key mismatch (`Config.Queues` key vs `Handle` key) | Use the exact same queue key string in config, handler binding, and `server.Queue(...)` |
+| Messages often go to `timeout` | `handle_timeout` too small for real processing time | Increase `handle_timeout` based on handler p99 latency |
 
 ## Configuration Example
 
