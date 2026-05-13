@@ -14,6 +14,7 @@ type Keys struct {
 	SequenceEpoch string
 }
 
+// NewKeys builds backend key names for one channel.
 func NewKeys(channel string) Keys {
 	return Keys{
 		Channel:       channel,
@@ -28,6 +29,7 @@ func NewKeys(channel string) Keys {
 	}
 }
 
+// Get returns one queue key by logical bucket name.
 func (k Keys) Get(name string) (string, error) {
 	switch name {
 	case "waiting":
@@ -45,6 +47,7 @@ func (k Keys) Get(name string) (string, error) {
 	}
 }
 
+// Message returns message entity key for message id.
 func (k Keys) Message(id string) string {
 	return k.MessagePrefix + id
 }

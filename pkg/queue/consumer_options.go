@@ -24,6 +24,7 @@ type consumerOptions struct {
 	logger          logger.Interface
 }
 
+// defaultConsumerOptions returns baseline runtime options for consumers.
 func defaultConsumerOptions() consumerOptions {
 	return consumerOptions{
 		concurrentLimit: 10,
@@ -35,6 +36,7 @@ func defaultConsumerOptions() consumerOptions {
 	}
 }
 
+// WithConsumerConcurrentLimit sets max in-flight handler goroutines.
 func WithConsumerConcurrentLimit(limit int) ConsumerOption {
 	return func(o *consumerOptions) {
 		if limit > 0 {
@@ -43,12 +45,14 @@ func WithConsumerConcurrentLimit(limit int) ConsumerOption {
 	}
 }
 
+// WithConsumerAutoRestart enables/disables bounded auto-restart mode.
 func WithConsumerAutoRestart(enabled bool) ConsumerOption {
 	return func(o *consumerOptions) {
 		o.autoRestart = enabled
 	}
 }
 
+// WithConsumerMaxMessages sets per-run message cap; 0 means unlimited.
 func WithConsumerMaxMessages(maxMessages int) ConsumerOption {
 	return func(o *consumerOptions) {
 		if maxMessages >= 0 {
@@ -57,6 +61,7 @@ func WithConsumerMaxMessages(maxMessages int) ConsumerOption {
 	}
 }
 
+// WithConsumerPopTimeout sets polling wait timeout for Pop.
 func WithConsumerPopTimeout(timeout time.Duration) ConsumerOption {
 	return func(o *consumerOptions) {
 		if timeout > 0 {
@@ -65,6 +70,7 @@ func WithConsumerPopTimeout(timeout time.Duration) ConsumerOption {
 	}
 }
 
+// WithConsumerHandleTimeout sets per-message handle timeout.
 func WithConsumerHandleTimeout(timeout time.Duration) ConsumerOption {
 	return func(o *consumerOptions) {
 		if timeout > 0 {
@@ -73,6 +79,7 @@ func WithConsumerHandleTimeout(timeout time.Duration) ConsumerOption {
 	}
 }
 
+// WithConsumerRetrySeconds sets retry delay sequence by attempt index.
 func WithConsumerRetrySeconds(retry []int) ConsumerOption {
 	return func(o *consumerOptions) {
 		if len(retry) > 0 {
@@ -81,6 +88,7 @@ func WithConsumerRetrySeconds(retry []int) ConsumerOption {
 	}
 }
 
+// WithConsumerMessageTTL sets message TTL metadata in seconds.
 func WithConsumerMessageTTL(seconds int) ConsumerOption {
 	return func(o *consumerOptions) {
 		if seconds >= 0 {
@@ -89,24 +97,28 @@ func WithConsumerMessageTTL(seconds int) ConsumerOption {
 	}
 }
 
+// WithConsumerHooks sets optional lifecycle callbacks.
 func WithConsumerHooks(hooks ConsumerHooks) ConsumerOption {
 	return func(o *consumerOptions) {
 		o.hooks = hooks
 	}
 }
 
+// WithConsumerName sets consumer logical name for logs and metrics.
 func WithConsumerName(name string) ConsumerOption {
 	return func(o *consumerOptions) {
 		o.name = name
 	}
 }
 
+// WithConsumerProcessID sets process index used in logs and hooks.
 func WithConsumerProcessID(processID int) ConsumerOption {
 	return func(o *consumerOptions) {
 		o.processID = processID
 	}
 }
 
+// WithConsumerLogger sets consumer logger implementation.
 func WithConsumerLogger(l logger.Interface) ConsumerOption {
 	return func(o *consumerOptions) {
 		if l != nil {

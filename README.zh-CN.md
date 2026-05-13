@@ -15,6 +15,7 @@
 - 按 `driver name` 注册可插拔驱动
 - 内置 Redis 驱动实现
 - 支持并发消费与自动重启
+- 基于 Redis Lua 的原子状态流转，支持超时恢复（`reserved -> timeout`）并提供至少一次投递语义
 - 提供查询、删除、重试、重装载、清理等管理能力
 - 支持 JSON / YAML 配置
 - 支持优雅停机
@@ -37,15 +38,6 @@ go get github.com/liuxiaozhicn/async-queue-go
 | `queue name` | `order` | 业务队列名，用于配置项 key、handler 注册和 `server.Queue("order")` |
 | `driver name` | `redis` | 后端驱动注册名，用于 `WithDriver("redis", driver)` 和配置中的 `driver` 字段 |
 | `channel` | `queue:order` | 队列在驱动中的逻辑队列标识（key 前缀）；生产端和消费端必须一致 |
-
-## Task 与 Message 的关系
-
-- `Task` 是业务侧定义的结构体（例如 `OrderTask`）。
-- `Message` 是队列运行时的消息封装，会落库保存（`id`、`payload`、`attempts`、`max_attempts`、`status`、时间戳等）。
-- `Queue.PushTask(ctx, task, delay)` 会把 `task` 序列化到 `Message.Payload` 后再投递。
-- `Queue.PushMessage(ctx, msg, delay)` 允许你直接投递构造好的 `Message`。
-- 消费侧 handler 收到的始终是 `*core.Message`，业务数据通过反序列化 `m.Payload` 获取。
-- `messageID` 由 driver 在投递时生成，后续用于 `GetMessage`、`Cancel`、`Reload`、`Flush` 等管理操作。
 
 ## 配置快速说明
 
@@ -144,6 +136,15 @@ go func() {
 ```
 
 如果进程只负责生产、不启动 worker，可以直接使用 `NewAsyncQueue(...)`。
+
+## Task 与 Message 的关系
+
+- `Task` 是业务侧定义的结构体（例如 `OrderTask`）。
+- `Message` 是队列运行时的消息封装，会落库保存（`id`、`payload`、`attempts`、`max_attempts`、`status`、时间戳等）。
+- `Queue.PushTask(ctx, task, delay)` 会把 `task` 序列化到 `Message.Payload` 后再投递。
+- `Queue.PushMessage(ctx, msg, delay)` 允许你直接投递构造好的 `Message`。
+- 消费侧 handler 收到的始终是 `*core.Message`，业务数据通过反序列化 `m.Payload` 获取。
+- `messageID` 由 driver 在投递时生成，后续用于 `GetMessage`、`Cancel`、`Reload`、`Flush` 等管理操作。
 
 ## 示例
 

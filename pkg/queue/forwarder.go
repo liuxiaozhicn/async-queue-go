@@ -7,14 +7,15 @@ import (
 	"github.com/liuxiaozhicn/async-queue-go/pkg/logger"
 )
 
+// forwarder moves delayed/expired messages between internal buckets.
 type forwarder struct {
-	driver        Driver
-	queueName     string
-	channel       string
-	logger        logger.Interface
-	idleInterval  time.Duration
-	busyInterval  time.Duration
-	errorInterval time.Duration
+	driver           Driver
+	queueName        string
+	channel          string
+	logger           logger.Interface
+	idleInterval     time.Duration
+	busyInterval     time.Duration
+	errorInterval    time.Duration
 	errorMaxInterval time.Duration
 }
 

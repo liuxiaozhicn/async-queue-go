@@ -16,10 +16,13 @@ type Info struct {
 }
 
 var (
+	// ErrMessageAlreadyReadyForDispatch means the message is already in waiting and cannot be canceled.
 	ErrMessageAlreadyReadyForDispatch = errors.New("message already ready for dispatch and cannot be canceled")
-	ErrMessageAlreadyInExecution      = errors.New("message is already in execution and cannot be canceled")
+	// ErrMessageAlreadyInExecution means the message is already claimed by consumer and cannot be canceled.
+	ErrMessageAlreadyInExecution = errors.New("message is already in execution and cannot be canceled")
 )
 
+// Driver defines backend operations required by producer, consumer and forwarder.
 type Driver interface {
 	Ping(ctx context.Context) error
 	Info(ctx context.Context, channel string) (Info, error)

@@ -11,12 +11,15 @@ import (
 	"github.com/liuxiaozhicn/async-queue-go/pkg/logger"
 )
 
+// Handler defines business processing logic for one message.
 type Handler interface {
 	Handle(context.Context, *core.Message) (core.Result, error)
 }
 
+// HandlerFunc adapts plain function to Handler interface.
 type HandlerFunc func(context.Context, *core.Message) (core.Result, error)
 
+// Handle adapts HandlerFunc to Handler interface.
 func (f HandlerFunc) Handle(ctx context.Context, m *core.Message) (core.Result, error) {
 	return f(ctx, m)
 }
@@ -29,6 +32,7 @@ type ConsumerHooks struct {
 	OnDrop    func(context.Context, *core.Message)
 }
 
+// ConsumerStats exposes cumulative consumer counters.
 type ConsumerStats struct {
 	Processed int64
 	Acked     int64
@@ -39,11 +43,13 @@ type ConsumerStats struct {
 	Errors    int64
 }
 
+// ConsumerRunError aggregates concurrent run errors.
 type ConsumerRunError struct {
 	First error
 	Count int64
 }
 
+// Error formats aggregated consumer run errors.
 func (e *ConsumerRunError) Error() string {
 	if e == nil || e.First == nil {
 		return ""
@@ -54,6 +60,7 @@ func (e *ConsumerRunError) Error() string {
 	return fmt.Sprintf("%s (and %d more errors)", e.First.Error(), e.Count-1)
 }
 
+// Consumer executes message polling, handling and commit transitions.
 type Consumer struct {
 	driver              Driver
 	channel             string
@@ -84,6 +91,7 @@ type Consumer struct {
 	concurrentErr error
 }
 
+// NewConsumer constructs a message consumer bound to one channel and handler.
 func NewConsumer(driver Driver, channel string, handler Handler, opts ...ConsumerOption) *Consumer {
 	consumerOptions := defaultConsumerOptions()
 	for _, opt := range opts {
@@ -110,6 +118,7 @@ func NewConsumer(driver Driver, channel string, handler Handler, opts ...Consume
 	}
 }
 
+// Stats returns current consumer counters.
 func (c *Consumer) Stats() ConsumerStats {
 	return ConsumerStats{
 		Processed: atomic.LoadInt64(&c.processed),
@@ -122,6 +131,7 @@ func (c *Consumer) Stats() ConsumerStats {
 	}
 }
 
+// Run starts the consumption loop until context canceled or fatal error occurs.
 func (c *Consumer) Run(ctx context.Context) error {
 	sem := make(chan struct{}, c.concurrentLimit)
 	var wg sync.WaitGroup
@@ -179,6 +189,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 	return c.runErr()
 }
 
+// incrErrors increments error counter when err is non-nil.
 func (c *Consumer) incrErrors(err error) {
 	if err == nil {
 		return
@@ -186,12 +197,14 @@ func (c *Consumer) incrErrors(err error) {
 	atomic.AddInt64(&c.errors, 1)
 }
 
+// recordErr stores first concurrent fatal error.
 func (c *Consumer) recordErr(err error) {
 	c.errMu.Lock()
 	defer c.errMu.Unlock()
 	c.concurrentErr = err
 }
 
+// runErr builds aggregated run error from internal counters and first error.
 func (c *Consumer) runErr() error {
 	count := atomic.LoadInt64(&c.errors)
 	if count == 0 {
@@ -203,6 +216,7 @@ func (c *Consumer) runErr() error {
 	return &ConsumerRunError{First: concurrentErr, Count: count}
 }
 
+// handleOne processes a single message and commits handler result atomically.
 func (c *Consumer) handleOne(ctx context.Context, messageID string, message *core.Message) error {
 	// The handler has finished; now we must commit the message disposition
 	// (ack/retry/fail/requeue). This context is detached from cancellation

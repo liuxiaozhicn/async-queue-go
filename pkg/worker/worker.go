@@ -12,6 +12,7 @@ type Runner interface {
 	Run(context.Context) error
 }
 
+// Worker wraps a Runner with start/stop/wait lifecycle controls.
 type Worker struct {
 	runner Runner
 
@@ -23,10 +24,14 @@ type Worker struct {
 	err     error         // consumer result, guarded by mu
 }
 
+// NewWorker creates a lifecycle-managed Worker around runner.
 func NewWorker(runner Runner) *Worker {
 	return &Worker{runner: runner}
 }
 
+// Start launches runner.Run in a background goroutine.
+//
+// Start returns an error when worker is already running.
 func (w *Worker) Start(ctx context.Context) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -54,6 +59,9 @@ func (w *Worker) Start(ctx context.Context) error {
 	return nil
 }
 
+// Wait blocks until runner exits and returns runner error.
+//
+// Wait also resets internal state so the worker can be started again.
 func (w *Worker) Wait() error {
 	w.mu.Lock()
 	done := w.done
@@ -70,6 +78,10 @@ func (w *Worker) Wait() error {
 	return err
 }
 
+// Stop cancels the runner context and waits for graceful exit.
+//
+// graceTimeout <= 0 waits indefinitely.
+// On timeout, worker state is reset and a timeout error is returned.
 func (w *Worker) Stop(graceTimeout time.Duration) error {
 	w.mu.Lock()
 	done := w.done

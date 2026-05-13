@@ -23,10 +23,12 @@ type RedisDriver struct {
 
 const maxMessageSequence = int64(999999999999)
 
+// Ping verifies Redis connectivity.
 func (d *RedisDriver) Ping(ctx context.Context) error {
 	return d.client.Ping(ctx).Err()
 }
 
+// NewRedisDriver creates a Redis-backed Driver implementation.
 func NewRedisDriver(client redis.UniversalClient, opts ...RedisDriverOption) *RedisDriver {
 	driverOptions := defaultRedisDriverOptions()
 	for _, opt := range opts {
@@ -41,6 +43,7 @@ func NewRedisDriver(client redis.UniversalClient, opts ...RedisDriverOption) *Re
 	}
 }
 
+// getKeys returns cached key templates for a channel.
 func (d *RedisDriver) getKeys(channel string) Keys {
 	if cachedKeys, ok := d.keyCache.Load(channel); ok {
 		return cachedKeys.(Keys)
@@ -84,6 +87,7 @@ func (d *RedisDriver) GenerateID(ctx context.Context, channel string) (string, e
 	return hex.EncodeToString(sum[:]), nil
 }
 
+// Push persists message payload and enqueues its id to waiting/delayed bucket.
 func (d *RedisDriver) Push(ctx context.Context, channel string, m *core.Message, delaySeconds int, messageTTL int) error {
 	if m == nil {
 		return errors.New("message is nil")
@@ -123,6 +127,7 @@ func (d *RedisDriver) Push(ctx context.Context, channel string, m *core.Message,
 	return nil
 }
 
+// Get fetches one message by id.
 func (d *RedisDriver) Get(ctx context.Context, channel string, id string) (*core.Message, error) {
 	if id == "" {
 		return nil, errors.New("id is empty")
@@ -130,6 +135,7 @@ func (d *RedisDriver) Get(ctx context.Context, channel string, id string) (*core
 	return d.loadMessage(ctx, channel, id)
 }
 
+// Cancel attempts to cancel one message by id.
 func (d *RedisDriver) Cancel(ctx context.Context, channel string, id string) (bool, error) {
 	if id == "" {
 		return false, errors.New("id is empty")
@@ -159,6 +165,7 @@ func (d *RedisDriver) Cancel(ctx context.Context, channel string, id string) (bo
 	}
 }
 
+// Retry reschedules a message for next attempt.
 func (d *RedisDriver) Retry(ctx context.Context, channel string, id string, delaySeconds int) (bool, error) {
 	if id == "" {
 		return false, errors.New("id is empty")
@@ -212,7 +219,7 @@ func (d *RedisDriver) ForwardMessages(ctx context.Context, channel string) (forw
 		ctx,
 		d.client,
 		[]string{keys.Delayed, keys.Waiting, keys.MessagePrefix},
-		now, string(core.StatusWaiting),
+		now+1, string(core.StatusWaiting),
 	).Int64()
 	if err != nil {
 		return 0, 0, err
@@ -278,6 +285,7 @@ func (d *RedisDriver) Pop(ctx context.Context, channel string, popTimeout time.D
 	return id, msg, nil
 }
 
+// Ack commits successful processing and marks message done.
 func (d *RedisDriver) Ack(ctx context.Context, channel string, messageID string) error {
 	keys := d.getKeys(channel)
 	_, err := ackScript.Run(
@@ -289,6 +297,7 @@ func (d *RedisDriver) Ack(ctx context.Context, channel string, messageID string)
 	return err
 }
 
+// Fail commits terminal failure and pushes id into failed bucket.
 func (d *RedisDriver) Fail(ctx context.Context, channel string, messageID string) error {
 	keys := d.getKeys(channel)
 	_, err := failScript.Run(
@@ -300,6 +309,7 @@ func (d *RedisDriver) Fail(ctx context.Context, channel string, messageID string
 	return err
 }
 
+// Drop commits business discard and marks message dropped.
 func (d *RedisDriver) Drop(ctx context.Context, channel string, messageID string) error {
 	keys := d.getKeys(channel)
 	_, err := dropScript.Run(
@@ -311,6 +321,7 @@ func (d *RedisDriver) Drop(ctx context.Context, channel string, messageID string
 	return err
 }
 
+// Requeue returns a reserved message to waiting immediately.
 func (d *RedisDriver) Requeue(ctx context.Context, channel string, messageID string) error {
 	keys := d.getKeys(channel)
 	_, err := requeueScript.Run(
@@ -322,6 +333,7 @@ func (d *RedisDriver) Requeue(ctx context.Context, channel string, messageID str
 	return err
 }
 
+// Reload moves timeout/failed messages back to waiting.
 func (d *RedisDriver) Reload(ctx context.Context, channel string, queue string) (int, error) {
 	keys := d.getKeys(channel)
 	source := keys.Failed
@@ -356,6 +368,7 @@ func (d *RedisDriver) Reload(ctx context.Context, channel string, queue string) 
 	}
 }
 
+// Flush clears one queue bucket key.
 func (d *RedisDriver) Flush(ctx context.Context, channel string, queue string) error {
 	keys := d.getKeys(channel)
 	key := keys.Failed
@@ -369,6 +382,7 @@ func (d *RedisDriver) Flush(ctx context.Context, channel string, queue string) e
 	return d.client.Del(ctx, key).Err()
 }
 
+// Info returns queue bucket lengths.
 func (d *RedisDriver) Info(ctx context.Context, channel string) (Info, error) {
 	keys := d.getKeys(channel)
 	waiting, err := d.client.LLen(ctx, keys.Waiting).Result()
@@ -394,6 +408,7 @@ func (d *RedisDriver) Info(ctx context.Context, channel string) (Info, error) {
 	return Info{Waiting: waiting, Reserved: reserved, Delayed: delayed, Timeout: timeout, Failed: failed}, nil
 }
 
+// loadMessage fetches and decodes message entity.
 func (d *RedisDriver) loadMessage(ctx context.Context, channel string, id string) (*core.Message, error) {
 	keys := d.getKeys(channel)
 	raw, err := d.client.Get(ctx, keys.Message(id)).Result()
@@ -403,6 +418,7 @@ func (d *RedisDriver) loadMessage(ctx context.Context, channel string, id string
 	return core.DecodeMessage(raw)
 }
 
+// asBoolResult converts Lua return value into bool.
 func asBoolResult(v interface{}) bool {
 	switch t := v.(type) {
 	case int64:
@@ -416,6 +432,7 @@ func asBoolResult(v interface{}) bool {
 	}
 }
 
+// asIntResult converts Lua return value into int.
 func asIntResult(v interface{}) int {
 	switch t := v.(type) {
 	case int64:

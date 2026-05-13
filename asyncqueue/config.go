@@ -24,8 +24,8 @@ type QueueConfig struct {
 	MaxAttempts     int    `json:"max_attempts"     yaml:"max_attempts"`
 	Processes       int    `json:"processes"        yaml:"processes"`
 	Concurrent      int    `json:"concurrent"       yaml:"concurrent"`
-	MaxMessages     int    `json:"max_messages"     yaml:"max_messages"`
 	AutoRestart     bool   `json:"auto_restart"     yaml:"auto_restart"`
+	MaxMessages     int    `json:"max_messages"     yaml:"max_messages"`
 	ShutdownTimeout int    `json:"shutdown_timeout" yaml:"shutdown_timeout"`
 }
 

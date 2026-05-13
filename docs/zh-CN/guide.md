@@ -12,15 +12,6 @@
 
 当前仓库内置 Redis 实现，运行时统一抽象在 `pkg/queue.Driver` 之下。
 
-## Task 与 Message 关系
-
-- `Task` 是业务层定义的任务结构体。
-- `Message` 是队列运行时使用并持久化的消息封装。
-- `PushTask` 会把 `Task` 序列化到 `Message.Payload` 后入队。
-- `PushMessage` 用于直接投递调用方构造好的消息封装。
-- 消费者 handler 收到的始终是 `*core.Message`，业务层需要把 `m.Payload` 反序列化为自己的 `Task` 类型。
-- `messageID` 由 driver 在投递时生成，是后续管理接口定位消息的主键。
-
 ## 配置示例
 
 ```json
@@ -204,6 +195,15 @@ func main() {
 如果启用队列对应的任务类型没有在 `ServeMux` 绑定，worker 启动会失败。
 你可以保留这个 `messageID`，后续用于 `GetMessage`、`Cancel`、`RetryByID` 等管理操作。
 
+## Task 与 Message 关系
+
+- `Task` 是业务层定义的任务结构体。
+- `Message` 是队列运行时使用并持久化的消息封装。
+- `PushTask` 会把 `Task` 序列化到 `Message.Payload` 后入队。
+- `PushMessage` 用于直接投递调用方构造好的消息封装。
+- 消费者 handler 收到的始终是 `*core.Message`，业务层需要把 `m.Payload` 反序列化为自己的 `Task` 类型。
+- `messageID` 由 driver 在投递时生成，是后续管理接口定位消息的主键。
+
 ## 配置项说明
 
 ### 完整示例
@@ -384,6 +384,19 @@ flowchart LR
 | 每条已消费消息只允许一次提交动作 | 消息进入 `reserved` 后，语义上只能落到 `ACK/RETRY/REQUEUE/DROP/FAIL` 之一 |
 | 重试路径固定为 `reserved -> waiting/delayed` | `delay<=0` 进入下一轮立即调度（`waiting`），`delay>0` 进入退避（`delayed`） |
 | 取消仅允许在 `delayed` | 消息进入 `waiting` 或 `reserved` 后按设计拒绝取消 |
+
+### Lua 原子性、超时容错与消息丢失语义
+
+- Lua 原子性：
+  `pop`、`ack`、`retry`、`requeue`、`fail`、`drop`、`cancel` 等状态提交都通过 Redis Lua 脚本执行。
+  单次脚本内的多 key 更新具备原子性，要么全部成功，要么全部不生效。
+- 超时容错：
+  当消息已进入 `reserved`，若 consumer 崩溃、卡死或进程异常退出，forwarder 会把超时保留消息转移到 `timeout`。
+  之后可通过 `Reload("timeout")` 重新投递。
+- 消息丢失语义：
+  系统目标是至少一次投递（at-least-once），不是 exactly-once。
+  在 Redis 持久化与 TTL 配置合理的前提下，不会在正常路径中无声丢消息。
+  但在外部条件下仍可能丢失（例如 Redis 数据丢失、显式 `Flush`、TTL 到期删除、人工破坏性操作）。
 
 ### 排障检查清单
 
