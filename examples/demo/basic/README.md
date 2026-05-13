@@ -13,12 +13,12 @@ This demo runs both producer and worker in one process.
 
 ## Configuration
 
-Queue config is built inline in [main.go](/Users/liuxiaozhi/Desktop/async-queue-go/examples/demo/main.go).
+Queue config is built inline in [basic/main.go](/Users/liuxiaozhi/Desktop/async-queue-go/examples/demo/basic/main.go).
 
 ## Run
 
 ```bash
-go run ./examples/demo
+go run ./examples/demo/basic
 ```
 
 Make sure Redis is available at `127.0.0.1:6379`.
@@ -26,5 +26,5 @@ Make sure Redis is available at `127.0.0.1:6379`.
 ## Test
 
 ```bash
-go test ./examples/demo
+go test ./examples/demo/basic
 ```

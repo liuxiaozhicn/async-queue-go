@@ -12,6 +12,15 @@
 
 当前仓库内置 Redis 实现，运行时统一抽象在 `pkg/queue.Driver` 之下。
 
+## Task 与 Message 关系
+
+- `Task` 是业务层定义的任务结构体。
+- `Message` 是队列运行时使用并持久化的消息封装。
+- `PushTask` 会把 `Task` 序列化到 `Message.Payload` 后入队。
+- `PushMessage` 用于直接投递调用方构造好的消息封装。
+- 消费者 handler 收到的始终是 `*core.Message`，业务层需要把 `m.Payload` 反序列化为自己的 `Task` 类型。
+- `messageID` 由 driver 在投递时生成，是后续管理接口定位消息的主键。
+
 ## 配置示例
 
 ```json
@@ -45,73 +54,151 @@ package main
 
 import (
 	"context"
-	"log"
-
-	"github.com/redis/go-redis/v9"
-
-	asyncqueue "github.com/liuxiaozhicn/async-queue-go/asyncqueue"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"github.com/liuxiaozhicn/async-queue-go/asyncqueue"
 	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
 	"github.com/liuxiaozhicn/async-queue-go/pkg/queue"
+	"github.com/redis/go-redis/v9"
+	"log"
+	"math/rand"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
 )
 
-type OrderJob struct {
-	OrderNo string `json:"order_no"`
+const (
+	queueName = "order"
+)
+
+var ErrUnknownProcessing = errors.New("unknown order processing error")
+
+// OrderTask handles order creation.
+type OrderTask struct {
+	OrderNo     string  `json:"order_no"`
+	UserID      int     `json:"user_id"`
+	TotalAmount float64 `json:"total_amount"`
 }
 
-func (j *OrderJob) GetType() string { return "order.create" }
+// OrderTaskHandler handles order creation.
+type OrderTaskHandler struct {
+}
 
-type OrderJobHandler struct{}
+func (h *OrderTaskHandler) nextResult() (core.Result, error) {
+	switch rand.Intn(5) {
+	case 0:
+		return core.ACK, nil
+	case 1:
+		return core.RETRY, nil
+	case 2:
+		return core.REQUEUE, nil
+	case 3:
+		return core.DROP, nil
+	default:
+		return "", ErrUnknownProcessing
+	}
+}
 
-func (h *OrderJobHandler) Handle(ctx context.Context, m *core.Message) (core.Result, error) {
-	return core.ACK, nil
+func (h *OrderTaskHandler) Handle(ctx context.Context, m *core.Message) (core.Result, error) {
+	job := &OrderTask{}
+	_ = json.Unmarshal(m.Payload, job)
+
+	duration := time.Duration(100+rand.Intn(200)) * time.Millisecond
+	select {
+	case <-time.After(duration):
+		return h.nextResult()
+	case <-ctx.Done():
+		return core.RETRY, ctx.Err()
+	}
+}
+
+func generateOrderNo() string {
+	b := make([]byte, 4)
+	_, _ = rand.Read(b)
+	randPart := fmt.Sprintf("%08x", b) // 8位随机hex
+	datePart := time.Now().Format("20060102")
+	return fmt.Sprintf("bn-%s-%s", datePart, randPart)
 }
 
 func main() {
-	ctx := context.Background()
-	redisClient := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
-	driver := queue.NewRedisDriver(redisClient)
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
+	defer client.Close()
 
-	cfg := &asyncqueue.Config{
+	queueCfg := &asyncqueue.Config{
 		Queues: map[string]asyncqueue.QueueConfig{
-			"order": {
-				Driver:        "redis",
-				Channel:       "queue:order",
-				Enabled:       true,
-				PopTimeout:    3,
-				HandleTimeout: 180,
-				RetrySeconds:  []int{30, 90, 180, 300},
-				MessageTTL:    864000,
-				MaxAttempts:   5,
-				Processes:     2,
-				Concurrent:    50,
+			queueName: {
+				Driver:          "redis",
+				Channel:         "queue:order",
+				Enabled:         true,
+				PopTimeout:      1,
+				HandleTimeout:   180,
+				ShutdownTimeout: 240,
+				Processes:       2,
+				Concurrent:      50,
+				MaxAttempts:     3,
+				RetrySeconds:    []int{5, 10, 30},
+				AutoRestart:     false,
+				MaxMessages:     10,
 			},
 		},
 	}
 
-	server, err := asyncqueue.NewServer(cfg, asyncqueue.WithDriver("redis", driver))
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	s, err := asyncqueue.NewServer(queueCfg, asyncqueue.WithDriver("redis", queue.NewRedisDriver(client)))
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("[Main] failed to load server: %v", err)
 	}
 
-	serveMux := asyncqueue.NewServeMux()
-	serveMux.Handle((&OrderJob{}).GetType(), &OrderJobHandler{})
+	var wg sync.WaitGroup
 
+	// Start worker
+	wg.Add(1)
 	go func() {
-		if err := server.Run(ctx, serveMux); err != nil {
-			log.Fatal(err)
+		defer wg.Done()
+		serveMux := asyncqueue.NewServeMux()
+		orderJobHandler := &OrderTaskHandler{}
+		serveMux.Handle(queueName, orderJobHandler)
+		if err := s.Run(ctx, serveMux); err != nil {
+			log.Fatalf("server run failed: %v", err)
 		}
 	}()
 
-	q, err := server.Queue("order")
-	if err != nil {
-		log.Fatal(err)
-	}
-	messageID, err := q.PushJob(ctx, &OrderJob{OrderNo: "demo-1001"}, 0)
-	if err != nil {
-		log.Fatal(err)
-	}
-	log.Printf("published message id=%s", messageID)
+	// Push initial sample jobs after worker is ready
+	time.Sleep(1 * time.Second)
+
+	// Push periodic jobs every 10s
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		queue, _ := s.Queue(queueName)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				orderNo := generateOrderNo()
+				job := &OrderTask{
+					OrderNo:     orderNo,
+					UserID:      rand.Intn(1000) + 1,
+					TotalAmount: float64(rand.Intn(95000)+1000) / 100.0,
+				}
+				_, err := queue.PushTask(ctx, job, 30)
+				if err != nil {
+					continue
+				}
+			}
+		}
+	}()
+	wg.Wait()
 }
+
+
 ```
 
 如果启用队列对应的任务类型没有在 `ServeMux` 绑定，worker 启动会失败。
@@ -351,7 +438,7 @@ Redis 驱动会按 `channel` 生成一组 key：
 
 | 方法                                    | 说明 |
 |---------------------------------------| --- |
-| `PushJob(ctx, job, delaySeconds)`     | 投递结构化任务 |
+| `PushTask(ctx, job, delaySeconds)`     | 投递结构化 Task |
 | `PushMessage(ctx, msg, delaySeconds)` | 投递原始消息 |
 | `Info(ctx)`                           | 获取 waiting / reserved / delayed / timeout / failed 统计 |
 | `GetMessage(ctx, id)`                 | 获取消息详情 |
@@ -432,7 +519,7 @@ server, err := asyncqueue.NewServer(
 
 ```go
 queueInstance, err := server.Queue("order")
-id, err := queueInstance.PushJob(ctx, job, 0)
+id, err := queueInstance.PushTask(ctx, job, 0)
 ```
 
 ### `DROP` 的语义是什么？

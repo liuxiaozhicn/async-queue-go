@@ -23,18 +23,18 @@ const (
 
 var ErrUnknownProcessing = errors.New("unknown order processing error")
 
-// OrderJob handles order creation.
-type OrderJob struct {
+// OrderTask handles order creation.
+type OrderTask struct {
 	OrderNo     string  `json:"order_no"`
 	UserID      int     `json:"user_id"`
 	TotalAmount float64 `json:"total_amount"`
 }
 
-// OrderJobHandler handles order creation.
-type OrderJobHandler struct {
+// OrderTaskHandler handles order creation.
+type OrderTaskHandler struct {
 }
 
-func (h *OrderJobHandler) nextResult() (core.Result, error) {
+func (h *OrderTaskHandler) nextResult() (core.Result, error) {
 	switch rand.Intn(5) {
 	case 0:
 		return core.ACK, nil
@@ -49,8 +49,8 @@ func (h *OrderJobHandler) nextResult() (core.Result, error) {
 	}
 }
 
-func (h *OrderJobHandler) Handle(ctx context.Context, m *core.Message) (core.Result, error) {
-	job := &OrderJob{}
+func (h *OrderTaskHandler) Handle(ctx context.Context, m *core.Message) (core.Result, error) {
+	job := &OrderTask{}
 	_ = json.Unmarshal(m.Payload, job)
 
 	duration := time.Duration(100+rand.Intn(200)) * time.Millisecond
@@ -108,7 +108,7 @@ func main() {
 	go func() {
 		defer wg.Done()
 		serveMux := asyncqueue.NewServeMux()
-		orderJobHandler := &OrderJobHandler{}
+		orderJobHandler := &OrderTaskHandler{}
 		serveMux.Handle(queueName, orderJobHandler)
 		if err := s.Run(ctx, serveMux); err != nil {
 			log.Fatalf("server run failed: %v", err)
@@ -131,12 +131,12 @@ func main() {
 				return
 			case <-ticker.C:
 				orderNo := generateOrderNo()
-				job := &OrderJob{
+				job := &OrderTask{
 					OrderNo:     orderNo,
 					UserID:      rand.Intn(1000) + 1,
 					TotalAmount: float64(rand.Intn(95000)+1000) / 100.0,
 				}
-				_, err := queue.PushJob(ctx, job, 30)
+				_, err := queue.PushTask(ctx, job, 30)
 				if err != nil {
 					continue
 				}

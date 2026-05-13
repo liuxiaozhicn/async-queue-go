@@ -215,7 +215,7 @@ func TestQueuePushJobAndInfo(t *testing.T) {
 		Subject: "Test",
 		Body:    "Hello",
 	}
-	if _, err := q.PushJob(ctx, job1, 0); err != nil {
+	if _, err := q.PushTask(ctx, job1, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -225,7 +225,7 @@ func TestQueuePushJobAndInfo(t *testing.T) {
 		Subject: "Delayed",
 		Body:    "World",
 	}
-	if _, err := q.PushJob(ctx, job2, 5); err != nil {
+	if _, err := q.PushTask(ctx, job2, 5); err != nil {
 		t.Fatal(err)
 	}
 
@@ -257,7 +257,7 @@ func TestQueuePushJobNilJob(t *testing.T) {
 	defer func() { _ = q.Close() }()
 
 	ctx := context.Background()
-	_, err = q.PushJob(ctx, nil, 0)
+	_, err = q.PushTask(ctx, nil, 0)
 	if err == nil {
 		t.Fatal("expected error for nil job")
 	}
@@ -287,7 +287,7 @@ func TestWorkerConsumesJobMessage(t *testing.T) {
 		Subject: "Worker Test",
 		Body:    "Content",
 	}
-	if _, err := q.PushJob(ctx, job, 0); err != nil {
+	if _, err := q.PushTask(ctx, job, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -362,7 +362,7 @@ func TestQueueCancel(t *testing.T) {
 		Body:    "This job will be canceled before dispatch",
 	}
 
-	messageID, err := q.PushJob(ctx, job, 10)
+	messageID, err := q.PushTask(ctx, job, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -417,7 +417,7 @@ func TestQueueCancelWaitingReturnsError(t *testing.T) {
 		Body:    "This job is already waiting for dispatch",
 	}
 
-	messageID, err := q.PushJob(ctx, job, 0)
+	messageID, err := q.PushTask(ctx, job, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -456,7 +456,7 @@ func TestQueueCancelReservedReturnsError(t *testing.T) {
 		Body:    "This job is already in execution",
 	}
 
-	messageID, err := q.PushJob(ctx, job, 0)
+	messageID, err := q.PushTask(ctx, job, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

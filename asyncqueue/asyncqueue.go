@@ -81,17 +81,17 @@ func (q *Queue) Close() error {
 	return nil
 }
 
-// PushJob marshals a job payload and enqueues it with queue defaults.
+// PushTask marshals a task payload and enqueues it with queue defaults.
 //
 // max attempts is injected from queue-level configuration. delaySeconds > 0 means delayed delivery.
 // Returns generated message ID on success.
-func (q *Queue) PushJob(ctx context.Context, job Job, delaySeconds int) (string, error) {
-	if job == nil {
-		return "", fmt.Errorf("push: job must not be nil")
+func (q *Queue) PushTask(ctx context.Context, task Task, delaySeconds int) (string, error) {
+	if task == nil {
+		return "", fmt.Errorf("push: task must not be nil")
 	}
-	data, err := json.Marshal(job)
+	data, err := json.Marshal(task)
 	if err != nil {
-		return "", fmt.Errorf("marshal job: %w", err)
+		return "", fmt.Errorf("marshal task: %w", err)
 	}
 	return q.pushMessage(ctx, &core.Message{
 		Payload:     data,

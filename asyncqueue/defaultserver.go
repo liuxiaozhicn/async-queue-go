@@ -34,15 +34,22 @@ func GetQueue(name string) (*Queue, error) {
 	return s.Queue(name)
 }
 
-// Push enqueues a job through the global server queue.
+// PushTask enqueues a task through the global server queue.
 //
-// It is a convenience wrapper for GetQueue(queueName).PushJob(...).
-func Push(ctx context.Context, queueName string, job Job, delaySeconds int) (string, error) {
+// It is a convenience wrapper for GetQueue(queueName).PushTask(...).
+func PushTask(ctx context.Context, queueName string, task Task, delaySeconds int) (string, error) {
 	q, err := GetQueue(queueName)
 	if err != nil {
 		return "", err
 	}
-	return q.PushJob(ctx, job, delaySeconds)
+	return q.PushTask(ctx, task, delaySeconds)
+}
+
+// Push is a backward-compatible alias of PushTask.
+//
+// Deprecated: use PushTask.
+func Push(ctx context.Context, queueName string, task Task, delaySeconds int) (string, error) {
+	return PushTask(ctx, queueName, task, delaySeconds)
 }
 
 // PushMessage enqueues a raw message through the global server queue.

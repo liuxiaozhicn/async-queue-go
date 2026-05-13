@@ -27,11 +27,9 @@ const (
 	defaultQueryDelay = 30
 )
 
-type OrderPaymentQueryJob struct {
+type OrderPaymentQueryTask struct {
 	OrderNo string `json:"order_no"`
 }
-
-func (j *OrderPaymentQueryJob) GetType() string { return queueOrderPayment }
 
 type OrderStatus string
 
@@ -84,7 +82,7 @@ type orderRequest struct {
 type OrderQueryHandler struct{}
 
 func (h *OrderQueryHandler) Handle(ctx context.Context, m *core.Message) (core.Result, error) {
-	var job OrderPaymentQueryJob
+	var job OrderPaymentQueryTask
 	if err := json.Unmarshal(m.Payload, &job); err != nil {
 		log.Printf("[job:order.payment.query] decode failed id=%s err=%v", m.ID, err)
 		return core.DROP, nil
@@ -128,7 +126,7 @@ func orderCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("queue not ready: %v", err))
 		return
 	}
-	jobID, err := q.PushJob(context.Background(), &OrderPaymentQueryJob{OrderNo: orderNo}, defaultQueryDelay)
+	jobID, err := q.PushTask(context.Background(), &OrderPaymentQueryTask{OrderNo: orderNo}, defaultQueryDelay)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("push payment-query job failed: %v", err))
 		return

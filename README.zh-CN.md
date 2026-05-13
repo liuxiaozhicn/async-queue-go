@@ -38,6 +38,15 @@ go get github.com/liuxiaozhicn/async-queue-go
 | `driver name` | `redis` | 后端驱动注册名，用于 `WithDriver("redis", driver)` 和配置中的 `driver` 字段 |
 | `channel` | `queue:order` | 队列在驱动中的逻辑队列标识（key 前缀）；生产端和消费端必须一致 |
 
+## Task 与 Message 的关系
+
+- `Task` 是业务侧定义的结构体（例如 `OrderTask`）。
+- `Message` 是队列运行时的消息封装，会落库保存（`id`、`payload`、`attempts`、`max_attempts`、`status`、时间戳等）。
+- `Queue.PushTask(ctx, task, delay)` 会把 `task` 序列化到 `Message.Payload` 后再投递。
+- `Queue.PushMessage(ctx, msg, delay)` 允许你直接投递构造好的 `Message`。
+- 消费侧 handler 收到的始终是 `*core.Message`，业务数据通过反序列化 `m.Payload` 获取。
+- `messageID` 由 driver 在投递时生成，后续用于 `GetMessage`、`Cancel`、`Reload`、`Flush` 等管理操作。
+
 ## 配置快速说明
 
 代码内最小配置示例：
@@ -93,10 +102,10 @@ cfg := &asyncqueue.Config{
 1. 启动 `Server`
 2. 通过 `ServeMux` 注册 handler
 3. `server.Run(...)` 启动后，通过 `server.Queue("order")` 获取队列实例
-4. 使用 `Queue.PushJob(...)` 投递
+4. 使用 `Queue.PushTask(...)` 投递
 
 重点：`server.Run(ctx, serveMux)` 依赖 `ServeMux` 完整绑定已启用队列的任务类型。  
-示例：`serveMux.Handle(orderJob.GetType(), orderJobHandler)`。
+示例：`serveMux.Handle("order", orderJobHandler)`。
 
 示例：
 
@@ -110,8 +119,8 @@ if err != nil {
 }
 
 serveMux := asyncqueue.NewServeMux()
-orderJobHandler := NewOrderJobHandler()
-serveMux.Handle((&OrderJob{}).GetType(), orderJobHandler)
+orderTaskHandler := NewOrderTaskHandler()
+serveMux.Handle("order", orderTaskHandler)
 
 go func() {
     if err := server.Run(ctx, serveMux); err != nil {
@@ -125,7 +134,7 @@ go func() {
         log.Fatal(err)
     }
 
-    _, err = queueInstance.PushJob(ctx, &OrderJob{
+    _, err = queueInstance.PushTask(ctx, &OrderTask{
         OrderNo: "demo-order-no",
     }, 30)
     if err != nil {
@@ -138,14 +147,15 @@ go func() {
 
 ## 示例
 
-- 高层完整示例：[`examples/demo/main.go`](examples/demo/main.go)
+- 高层完整示例：[`examples/demo/basic/main.go`](examples/demo/basic/main.go)
+- 业务场景示例：[`examples/demo/order/main.go`](examples/demo/order/main.go)
 - Demo 配置：[`examples/demo/config.json`](examples/demo/config.json)
 - 低层 worker 示例：[`examples/worker/main.go`](examples/worker/main.go)
 
 运行 demo：
 
 ```bash
-go run ./examples/demo
+go run ./examples/demo/basic
 ```
 
 ## 详细文档
