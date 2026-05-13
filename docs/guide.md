@@ -23,6 +23,8 @@ Current repository provides Redis implementation via `pkg/queue.Driver`.
 
 Use the steps below to run the `order` example end-to-end quickly:
 
+This demo models a common payment workflow: after order creation, the system marks it as unpaid and enqueues an async "query payment status" task; if callback arrives first, the pending query task is canceled; if callback does not arrive, the queue continues querying by retry policy until the task finishes.
+
 1. Clone repository and enter project directory:
 ```bash
 git clone https://github.com/liuxiaozhicn/async-queue-go.git
