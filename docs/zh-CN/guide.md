@@ -6,11 +6,32 @@
 
 `async-queue-go` 把业务路由和后端驱动做了分层：
 
-- `queue name`：业务队列名，例如 `order`
-- `driver name`：后端驱动注册名，例如 `redis`
+- `queue`：业务队列 key，例如 `order`
+- `driver`：后端驱动注册 key，例如 `redis`
 - `channel`：后端存储命名空间，例如 `queue:order`
 
 当前仓库内置 Redis 实现，运行时统一抽象在 `pkg/queue.Driver` 之下。
+
+### 可靠性保证与边界
+
+- 原子性：
+  队列状态流转通过 Redis Lua 脚本提交，单次操作内的多 key 更新具备原子性。
+- 超时容错：
+  consumer 在 `reserved` 后异常退出时，forwarder 会把超时保留消息迁移到 `timeout`。
+- 可重装载：
+  `Reload("timeout")` 与 `Reload("failed")` 是显式的运维恢复路径，可把消息重新放回 `waiting`。
+- 投递语义：
+  系统提供至少一次投递（at-least-once），不是 exactly-once。
+  业务 handler 需要按幂等方式设计，以处理潜在重复投递。
+- 丢失边界：
+  正常链路下不应出现无声丢失；在外部破坏性操作或存储层数据丢失场景下仍可能丢失。
+
+> [!IMPORTANT]
+> 投递保证是 **at-least-once**，业务 handler 应按**幂等**实现。
+
+> [!WARNING]
+> 这不等于 exactly-once，也不代表基础设施故障下绝对不丢失。
+> 外部破坏性操作与存储层数据丢失不在运行时保证范围内。
 
 ## 配置示例
 
@@ -37,6 +58,11 @@
 ```
 
 常规用法（推荐）：在代码里构建 `Config`，直接用 `NewServer`。
+handler 绑定规则：`ServeMux.Handle(<queue>, <handler>)` 中的 `<queue>` 必须与 `Config.Queues` 的 key 一致，否则已启用 worker 启动会失败。
+
+> [!IMPORTANT]
+> **必须绑定 handler**：`Config.Queues` 中每个启用队列都必须在 `Run` 前完成
+> `ServeMux.Handle(<queue>, <handler>)` 绑定。
 
 完整可运行示例：
 

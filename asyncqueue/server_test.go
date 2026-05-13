@@ -2,11 +2,8 @@ package asyncqueue
 
 import (
 	"context"
-	"encoding/json"
 	"github.com/liuxiaozhicn/async-queue-go/pkg/core"
 	"github.com/liuxiaozhicn/async-queue-go/pkg/queue"
-	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -22,25 +19,14 @@ type bindTestJob2 struct {
 func (j *bindTestJob2) GetType() string { return "bindTestJob2" }
 
 func TestServerLoadAndLifecycle(t *testing.T) {
-	t.Run("load config file then create server", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		configFile := filepath.Join(tmpDir, "config.json")
-		configData := map[string]any{
-			"queues": map[string]any{
-				"default": map[string]any{
-					"channel": "{queue}",
-					"enabled": false,
+	t.Run("create server from config", func(t *testing.T) {
+		cfg := &Config{
+			Queues: map[string]QueueConfig{
+				"default": {
+					Channel: "{queue}",
+					Enabled: false,
 				},
 			},
-		}
-		data, _ := json.Marshal(configData)
-		if err := os.WriteFile(configFile, data, 0o644); err != nil {
-			t.Fatal(err)
-		}
-
-		cfg, err := LoadConfig(configFile)
-		if err != nil {
-			t.Fatalf("LoadConfig failed: %v", err)
 		}
 		s, err := NewServer(cfg)
 		if err != nil {
@@ -51,25 +37,14 @@ func TestServerLoadAndLifecycle(t *testing.T) {
 		}
 	})
 
-	t.Run("create server from loaded config", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		configFile := filepath.Join(tmpDir, "config.json")
-		configData := map[string]any{
-			"queues": map[string]any{
-				"default": map[string]any{
-					"channel": "{queue}",
-					"enabled": false,
+	t.Run("create server from minimal config", func(t *testing.T) {
+		cfg := &Config{
+			Queues: map[string]QueueConfig{
+				"default": {
+					Channel: "{queue}",
+					Enabled: false,
 				},
 			},
-		}
-		data, _ := json.Marshal(configData)
-		if err := os.WriteFile(configFile, data, 0o644); err != nil {
-			t.Fatal(err)
-		}
-
-		cfg, err := LoadConfig(configFile)
-		if err != nil {
-			t.Fatalf("LoadConfig failed: %v", err)
 		}
 		s, err := NewServer(cfg)
 		if err != nil {

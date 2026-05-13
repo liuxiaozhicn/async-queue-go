@@ -12,13 +12,33 @@ It provides:
 
 ## Features
 
-- Pluggable drivers registered by `driver name`
+- Pluggable drivers registered by `driver`
 - Built-in Redis driver
 - Concurrent consumers with auto-restart support
 - Atomic queue-state transitions via Redis Lua scripts, with timeout recovery (`reserved -> timeout`) and at-least-once delivery semantics
 - Queue management APIs for info, delete, retry, reload, and flush
 - JSON / YAML configuration support
 - Graceful shutdown support
+
+## Reliability Highlights
+
+- **Atomic state transitions**:
+  message commit operations (`Pop/Ack/Retry/Requeue/Drop/Fail/Cancel`) are executed by Redis Lua scripts, so multi-key changes are applied atomically.
+- **Timeout fault tolerance**:
+  if a consumer crashes after claiming a message, forwarder moves expired reservations from `reserved` to `timeout`.
+- **Manual recovery**:
+  operators can call `Reload("timeout")` / `Reload("failed")` to re-deliver stalled or failed messages.
+- **Message loss semantics**:
+  the system is at-least-once, not exactly-once.
+  Under normal Redis durability and sane TTL settings, messages are not silently dropped from the active flow;
+  data loss can still happen via external destructive conditions (manual flush/delete, key expiration policy, Redis data loss).
+
+> [!IMPORTANT]
+> Delivery guarantee is **at-least-once**. Handlers must be **idempotent**.
+
+> [!WARNING]
+> "No silent loss" applies to the normal runtime path only. External destructive actions
+> (`Flush/Delete`), TTL expiration, or Redis data loss can still cause message loss.
 
 ## Installation
 
@@ -35,8 +55,8 @@ go get github.com/liuxiaozhicn/async-queue-go
 
 | Concept | Example | Purpose |
 | --- | --- | --- |
-| `queue name` | `order` | Business queue name used for config lookup, handler binding, and `server.Queue("order")` |
-| `driver name` | `redis` | Backend registration name used by `WithDriver("redis", driver)` and the `driver` config field |
+| `queue` | `order` | Business queue key used for config lookup, handler binding, and `server.Queue("order")` |
+| `driver` | `redis` | Backend registration key used by `WithDriver("redis", driver)` and the `driver` config field |
 | `channel` | `queue:order` | Logical queue identifier (key prefix) in the driver backend; producer and consumer must use the same channel |
 
 ## Configuration Quick Reference
@@ -98,6 +118,12 @@ The primary path is:
 
 Important: `server.Run(ctx, serveMux)` requires handler binding for every enabled queue type.  
 For example: `serveMux.Handle("order", orderJobHandler)`.
+Binding rule: `ServeMux.Handle(<queue>, <handler>)` must use the same `<queue>` key as `Config.Queues`.
+If an enabled queue is missing this binding, worker startup fails.
+
+> [!IMPORTANT]
+> **Handler binding is mandatory**:
+> `ServeMux.Handle(<queue>, <handler>)` must match the `Config.Queues` key exactly.
 
 Example:
 
@@ -150,7 +176,6 @@ If a process is producer-only and does not run workers, use `NewAsyncQueue(...)`
 
 - High-level example: [`examples/demo/basic/main.go`](examples/demo/basic/main.go)
 - Business scenario example: [`examples/demo/order/main.go`](examples/demo/order/main.go)
-- Demo config: [`examples/demo/config.json`](examples/demo/config.json)
 - Low-level worker example: [`examples/worker/main.go`](examples/worker/main.go)
 
 Run the demo:

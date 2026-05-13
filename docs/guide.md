@@ -6,11 +6,32 @@
 
 `async-queue-go` separates business routing from backend wiring:
 
-- `queue name`: business queue key such as `order`
-- `driver name`: backend registration key such as `redis`
+- `queue`: business queue key such as `order`
+- `driver`: backend registration key such as `redis`
 - `channel`: backend storage namespace such as `queue:order`
 
 The current repository ships with a Redis implementation and keeps the runtime behind `pkg/queue.Driver`.
+
+### Reliability Guarantees and Boundaries
+
+- Atomicity:
+  queue state transitions are committed through Redis Lua scripts, so multi-key updates in one operation are atomic.
+- Timeout fault tolerance:
+  when a consumer exits unexpectedly after `reserved`, forwarder migrates expired reservations to `timeout`.
+- Reloadability:
+  `Reload("timeout")` and `Reload("failed")` are explicit operational paths to put messages back to `waiting`.
+- Delivery semantics:
+  this project provides at-least-once delivery, not exactly-once.
+  You must design handler idempotency to handle possible duplicate deliveries.
+- Loss boundary:
+  no silent loss is expected in normal flow; loss can still happen under external destructive actions or storage-level data loss.
+
+> [!IMPORTANT]
+> Delivery guarantee is **at-least-once**. Business handlers should be **idempotent**.
+
+> [!WARNING]
+> Do not interpret this as exactly-once or absolute no-loss across infrastructure failures.
+> External destructive operations and storage-level data loss are out of runtime guarantees.
 
 ## Configuration Example
 
@@ -37,6 +58,11 @@ The current repository ships with a Redis implementation and keeps the runtime b
 ```
 
 Primary usage (recommended): build `Config` in code and use `NewServer` directly.
+Handler binding rule: `ServeMux.Handle(<queue>, <handler>)` must use the same `<queue>` key as `Config.Queues`, otherwise enabled workers fail to start.
+
+> [!IMPORTANT]
+> **Required binding**: each enabled queue key in `Config.Queues` must have a matching
+> `ServeMux.Handle(<queue>, <handler>)` registration before `Run`.
 
 Complete runnable example:
 

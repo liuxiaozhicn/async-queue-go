@@ -12,13 +12,33 @@
 
 ## 特性
 
-- 按 `driver name` 注册可插拔驱动
+- 按 `driver` 注册可插拔驱动
 - 内置 Redis 驱动实现
 - 支持并发消费与自动重启
 - 基于 Redis Lua 的原子状态流转，支持超时恢复（`reserved -> timeout`）并提供至少一次投递语义
 - 提供查询、删除、重试、重装载、清理等管理能力
 - 支持 JSON / YAML 配置
 - 支持优雅停机
+
+## 可靠性关键特性
+
+- **原子状态提交**：
+  `Pop/Ack/Retry/Requeue/Drop/Fail/Cancel` 等动作通过 Redis Lua 脚本完成，多 key 变更在单次脚本内原子生效。
+- **超时容错**：
+  consumer 取走消息后若崩溃或卡死，forwarder 会把超时消息从 `reserved` 转移到 `timeout`。
+- **人工重装载**：
+  可通过 `Reload("timeout")` / `Reload("failed")` 把积压消息重新放回 `waiting`。
+- **消息丢失语义**：
+  系统语义是至少一次投递（at-least-once），不是 exactly-once。
+  在 Redis 持久化和 TTL 配置合理前提下，不会在正常路径中无声丢消息；
+  外部破坏性条件下仍可能丢失（如人工 `Flush/Delete`、TTL 到期删除、Redis 数据丢失）。
+
+> [!IMPORTANT]
+> 投递保证是 **at-least-once**，业务 handler 必须按**幂等**设计。
+
+> [!WARNING]
+> “不无声丢失”仅针对正常运行路径。外部破坏性操作（`Flush/Delete`）、
+> TTL 到期删除或 Redis 数据丢失仍可能导致消息丢失。
 
 ## 安装
 
@@ -35,8 +55,8 @@ go get github.com/liuxiaozhicn/async-queue-go
 
 | 概念 | 示例 | 作用 |
 | --- | --- | --- |
-| `queue name` | `order` | 业务队列名，用于配置项 key、handler 注册和 `server.Queue("order")` |
-| `driver name` | `redis` | 后端驱动注册名，用于 `WithDriver("redis", driver)` 和配置中的 `driver` 字段 |
+| `queue` | `order` | 业务队列 key，用于配置项查找、handler 绑定和 `server.Queue("order")` |
+| `driver` | `redis` | 后端驱动注册 key，用于 `WithDriver("redis", driver)` 和配置中的 `driver` 字段 |
 | `channel` | `queue:order` | 队列在驱动中的逻辑队列标识（key 前缀）；生产端和消费端必须一致 |
 
 ## 配置快速说明
@@ -98,6 +118,12 @@ cfg := &asyncqueue.Config{
 
 重点：`server.Run(ctx, serveMux)` 依赖 `ServeMux` 完整绑定已启用队列的任务类型。  
 示例：`serveMux.Handle("order", orderJobHandler)`。
+绑定规则：`ServeMux.Handle(<queue>, <handler>)` 的 `<queue>` 必须与 `Config.Queues` 的 key 完全一致。
+若某个已启用队列缺少该绑定，worker 启动会失败。
+
+> [!IMPORTANT]
+> **必须完成 handler 绑定**：
+> `ServeMux.Handle(<queue>, <handler>)` 的 `<queue>` 必须与 `Config.Queues` key 严格一致。
 
 示例：
 
@@ -150,7 +176,6 @@ go func() {
 
 - 高层完整示例：[`examples/demo/basic/main.go`](examples/demo/basic/main.go)
 - 业务场景示例：[`examples/demo/order/main.go`](examples/demo/order/main.go)
-- Demo 配置：[`examples/demo/config.json`](examples/demo/config.json)
 - 低层 worker 示例：[`examples/worker/main.go`](examples/worker/main.go)
 
 运行 demo：
