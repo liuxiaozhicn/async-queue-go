@@ -16,6 +16,9 @@ type asyncQueueOptions struct {
 	logger        logger.Interface
 }
 
+// defaultQueueOptions returns production-oriented defaults for queue runtime knobs.
+//
+// These defaults are used when caller does not provide explicit QueueOption overrides.
 func defaultQueueOptions(channel string) asyncQueueOptions {
 	return asyncQueueOptions{
 		popTimeout:    1,
@@ -28,6 +31,9 @@ func defaultQueueOptions(channel string) asyncQueueOptions {
 	}
 }
 
+// WithQueuePopTimeout sets blocking pop timeout in seconds.
+//
+// Non-positive values are ignored.
 func WithQueuePopTimeout(seconds int) QueueOption {
 	return func(o *asyncQueueOptions) {
 		if seconds > 0 {
@@ -36,6 +42,9 @@ func WithQueuePopTimeout(seconds int) QueueOption {
 	}
 }
 
+// WithQueueHandleTimeout sets per-message handler timeout in seconds.
+//
+// Non-positive values are ignored.
 func WithQueueHandleTimeout(seconds int) QueueOption {
 	return func(o *asyncQueueOptions) {
 		if seconds > 0 {
@@ -44,6 +53,9 @@ func WithQueueHandleTimeout(seconds int) QueueOption {
 	}
 }
 
+// WithQueueRetrySeconds sets retry backoff (seconds) by attempt index.
+//
+// Empty slices are ignored.
 func WithQueueRetrySeconds(retry []int) QueueOption {
 	return func(o *asyncQueueOptions) {
 		if len(retry) > 0 {
@@ -52,6 +64,9 @@ func WithQueueRetrySeconds(retry []int) QueueOption {
 	}
 }
 
+// WithQueueMessageTTL sets message key TTL in seconds.
+//
+// Use 0 to disable TTL when supported by driver behavior.
 func WithQueueMessageTTL(seconds int) QueueOption {
 	return func(o *asyncQueueOptions) {
 		if seconds >= 0 {
@@ -60,6 +75,9 @@ func WithQueueMessageTTL(seconds int) QueueOption {
 	}
 }
 
+// WithQueueMaxAttempts sets maximum delivery attempts per message.
+//
+// Non-positive values are ignored.
 func WithQueueMaxAttempts(max int) QueueOption {
 	return func(o *asyncQueueOptions) {
 		if max > 0 {
@@ -68,6 +86,9 @@ func WithQueueMaxAttempts(max int) QueueOption {
 	}
 }
 
+// WithQueueName sets queue display name for logs and metadata.
+//
+// Empty names are ignored.
 func WithQueueName(name string) QueueOption {
 	return func(o *asyncQueueOptions) {
 		if name != "" {
@@ -76,6 +97,9 @@ func WithQueueName(name string) QueueOption {
 	}
 }
 
+// WithQueueLogger sets queue logger implementation.
+//
+// Nil logger is ignored.
 func WithQueueLogger(l logger.Interface) QueueOption {
 	return func(o *asyncQueueOptions) {
 		if l != nil {

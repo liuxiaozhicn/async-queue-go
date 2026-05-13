@@ -22,8 +22,10 @@ type Server struct {
 	drivers  map[string]queue.Driver
 }
 
-// NewServer creates a Server from configuration.
-// Queue drivers are resolved from Config, and can be overridden by options.
+// NewServer creates a server from configuration and registered options.
+//
+// Drivers are not auto-built from config: callers register prepared driver instances via WithDriver.
+// The created server is set as global default server.
 func NewServer(cfg *Config, opts ...Option) (*Server, error) {
 	if cfg == nil {
 		return nil, errors.New("config is required")
@@ -56,7 +58,9 @@ func NewServer(cfg *Config, opts ...Option) (*Server, error) {
 	return s, nil
 }
 
-// Handle registers a handler for a queue.
+// Handle registers one handler for a queue name.
+//
+// queueName should match the key in Config.Queues for runtime dispatch.
 func (s *Server) Handle(queueName string, handler queue.Handler) {
 	if s == nil || s.serveMux == nil {
 		return
@@ -64,8 +68,9 @@ func (s *Server) Handle(queueName string, handler queue.Handler) {
 	s.serveMux.Handle(queueName, handler)
 }
 
-// Bind registers one or more Jobs as handlers for their own queues.
-// The queue name for each job is taken from j.GetType().
+// Bind registers one handler for a queue name.
+//
+// It is currently equivalent to Handle and kept for API readability/compatibility.
 func (s *Server) Bind(queueName string, handler queue.Handler) {
 	if s == nil || s.serveMux == nil {
 		return
@@ -73,10 +78,10 @@ func (s *Server) Bind(queueName string, handler queue.Handler) {
 	s.serveMux.Handle(queueName, handler)
 }
 
-// Run merges all handlers from registry into the server, then starts
-// processing, handles OS signals, and blocks until exit.
+// Run merges handlers from serveMux and starts manager lifecycle.
 //
-// Build the registry with NewHandlerRegistry + WrapJob, or via queueHandle:
+// When serveMux is non-nil, handlers are copied into server registry before startup.
+// Run blocks until manager exits or ctx is canceled.
 func (s *Server) Run(ctx context.Context, serveMux *ServeMux) error {
 	if s == nil || s.manager == nil {
 		return errors.New("server is nil")
@@ -99,7 +104,9 @@ func (s *Server) Run(ctx context.Context, serveMux *ServeMux) error {
 	return err
 }
 
-// Stop gracefully stops the server.
+// Stop gracefully stops all workers through manager.Stop.
+//
+// timeout <= 0 means wait indefinitely.
 func (s *Server) Stop(timeout time.Duration) error {
 	if s == nil || s.manager == nil {
 		return errors.New("server is nil")
@@ -109,7 +116,9 @@ func (s *Server) Stop(timeout time.Duration) error {
 	return err
 }
 
-// Queue returns the started queue instance by name.
+// Queue returns a queue facade by configured queue name.
+//
+// Returned queue is intended for producer-side operations (Push/Get/Cancel/Info).
 func (s *Server) Queue(name string) (*Queue, error) {
 	if s == nil || s.manager == nil {
 		return nil, errors.New("server is nil")
@@ -117,7 +126,9 @@ func (s *Server) Queue(name string) (*Queue, error) {
 	return s.manager.GetQueue(name)
 }
 
-// Config returns the server configuration.
+// Config returns the server configuration pointer.
+//
+// The returned pointer is owned by server; callers should treat it as read-only.
 func (s *Server) Config() *Config {
 	if s == nil {
 		return nil
@@ -125,6 +136,9 @@ func (s *Server) Config() *Config {
 	return s.config
 }
 
+// shutdownTimeout returns the largest enabled queue shutdown timeout.
+//
+// If no queue provides a larger value, default is 30 seconds.
 func (s *Server) shutdownTimeout() time.Duration {
 	if s == nil || s.config == nil {
 		return 30 * time.Second

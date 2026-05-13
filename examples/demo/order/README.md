@@ -2,10 +2,10 @@
 
 This demo keeps only 2 business routes:
 
-- `POST /orders`: create order and schedule active payment-query task
-- `POST /payments/callback`: simulate callback; if callback arrives first, cancel the scheduled query task
+- `POST /order/create`: create order and schedule active payment-query task
+- `POST /payment/callback`: simulate callback; if callback arrives first, cancel the scheduled query task
 
-It uses an isolated Redis channel prefix: `queue:order:demo`.
+It uses a dedicated Redis channel prefix: `order:payment`.
 
 Queue behavior:
 
@@ -25,7 +25,7 @@ go run ./examples/demo/order
 Create order:
 
 ```bash
-curl -s -X POST http://127.0.0.1:8080/orders \
+curl -s -X POST http://127.0.0.1:8080/order/create \
   -H "Content-Type: application/json" \
   -d '{"order_no":"ORD-1001"}'
 ```
@@ -36,7 +36,7 @@ Later callback uses this scheduled message id to cancel pending query.
 Payment callback:
 
 ```bash
-curl -s -X POST http://127.0.0.1:8080/payments/callback \
+curl -s -X POST http://127.0.0.1:8080/payment/callback \
   -H "Content-Type: application/json" \
   -d '{"order_no":"ORD-1001"}'
 ```

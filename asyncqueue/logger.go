@@ -12,6 +12,8 @@ type LogLevel = logger.LogLevel
 
 // WithLogger configures a custom logger for the server.
 // If not provided, logger.Default (Info level, standard log) is used.
+// Nil logger is accepted but may result in nil pointer issues in downstream code;
+// prefer passing a concrete logger implementation.
 //
 // Example:
 //

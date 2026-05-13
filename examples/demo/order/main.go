@@ -20,8 +20,8 @@ import (
 )
 
 const (
-	queueName         = "order:payment"
-	queueChannel      = "queue:order:payment"
+	queueOrderPayment = "order:payment"
+	queueChannel      = "order:payment"
 	defaultHTTPAddr   = ":8080"
 	defaultRedisAddr  = "127.0.0.1:6379"
 	defaultQueryDelay = 30
@@ -31,7 +31,7 @@ type OrderPaymentQueryJob struct {
 	OrderNo string `json:"order_no"`
 }
 
-func (j *OrderPaymentQueryJob) GetType() string { return queueName }
+func (j *OrderPaymentQueryJob) GetType() string { return queueOrderPayment }
 
 type OrderStatus string
 
@@ -83,7 +83,7 @@ type orderRequest struct {
 
 type OrderQueryHandler struct{}
 
-func (h *OrderQueryHandler) Handle(_ context.Context, m *core.Message) (core.Result, error) {
+func (h *OrderQueryHandler) Handle(ctx context.Context, m *core.Message) (core.Result, error) {
 	var job OrderPaymentQueryJob
 	if err := json.Unmarshal(m.Payload, &job); err != nil {
 		log.Printf("[job:order.payment.query] decode failed id=%s err=%v", m.ID, err)
@@ -100,8 +100,7 @@ func (h *OrderQueryHandler) Handle(_ context.Context, m *core.Message) (core.Res
 		return core.ACK, nil
 	}
 
-	attempt := *m
-	if rand.Intn(4) == 0 || !attempt.AttemptsAllowed() {
+	if rand.Intn(4) == 0 || m.Attempts >= m.MaxAttempts {
 		order.Status = OrderStatusPaid
 		OrderStore.save(order)
 		log.Printf("[job:order.payment.query] order_no=%s paid_by_query attempts=%d/%d id=%s", order.OrderNo, m.Attempts, m.MaxAttempts, m.ID)
@@ -124,12 +123,12 @@ func orderCreate(w http.ResponseWriter, r *http.Request) {
 		orderNo = fmt.Sprintf("ORD-%d", time.Now().UnixNano())
 	}
 
-	q, err := asyncqueue.GetQueue(queueName)
+	q, err := asyncqueue.GetQueue(queueOrderPayment)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("queue not ready: %v", err))
 		return
 	}
-	jobID, err := q.PushJob(r.Context(), &OrderPaymentQueryJob{OrderNo: orderNo}, defaultQueryDelay)
+	jobID, err := q.PushJob(context.Background(), &OrderPaymentQueryJob{OrderNo: orderNo}, defaultQueryDelay)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("push payment-query job failed: %v", err))
 		return
@@ -167,7 +166,7 @@ func paymentCallback(w http.ResponseWriter, r *http.Request) {
 	order.Status = OrderStatusPaid
 	order = OrderStore.save(order)
 
-	q, err := asyncqueue.GetQueue(queueName)
+	q, err := asyncqueue.GetQueue(queueOrderPayment)
 	if err != nil {
 		log.Printf("[payment.callback] order_no=%s get queue failed: %v", order.OrderNo, err)
 	} else if _, err := q.Cancel(r.Context(), order.JobID); err != nil {
@@ -196,7 +195,7 @@ func main() {
 
 	cfg := &asyncqueue.Config{
 		Queues: map[string]asyncqueue.QueueConfig{
-			queueName: {
+			queueOrderPayment: {
 				Driver:          "redis",
 				Channel:         queueChannel,
 				Enabled:         true,
@@ -218,7 +217,7 @@ func main() {
 	}
 
 	serveMux := asyncqueue.NewServeMux()
-	serveMux.Handle(queueName, &OrderQueryHandler{})
+	serveMux.Handle(queueOrderPayment, &OrderQueryHandler{})
 
 	go func() {
 		if err := s.Run(ctx, serveMux); err != nil && !errors.Is(err, context.Canceled) {

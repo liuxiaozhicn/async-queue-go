@@ -10,7 +10,9 @@ import (
 
 var defaultServer atomic.Pointer[Server]
 
-// DefaultServer returns the global Server, or nil if none is set.
+// DefaultServer returns the current global server instance.
+//
+// It returns nil when no server has been created or after explicit reset.
 func DefaultServer() *Server {
 	return defaultServer.Load()
 }
@@ -21,7 +23,9 @@ func SetDefaultServer(s *Server) {
 	defaultServer.Store(s)
 }
 
-// GetQueue returns the named Queue from the global Server.
+// GetQueue returns a queue facade from the global server.
+//
+// Returns error when global server is not initialized or queue is missing.
 func GetQueue(name string) (*Queue, error) {
 	s := defaultServer.Load()
 	if s == nil {
@@ -30,7 +34,9 @@ func GetQueue(name string) (*Queue, error) {
 	return s.Queue(name)
 }
 
-// Push marshals job and enqueues it on the named queue via the global Server.
+// Push enqueues a job through the global server queue.
+//
+// It is a convenience wrapper for GetQueue(queueName).PushJob(...).
 func Push(ctx context.Context, queueName string, job Job, delaySeconds int) (string, error) {
 	q, err := GetQueue(queueName)
 	if err != nil {
@@ -39,7 +45,9 @@ func Push(ctx context.Context, queueName string, job Job, delaySeconds int) (str
 	return q.PushJob(ctx, job, delaySeconds)
 }
 
-// PushMessage enqueues a raw Message on the named queue via the global Server.
+// PushMessage enqueues a raw message through the global server queue.
+//
+// It is a convenience wrapper for GetQueue(queueName).PushMessage(...).
 func PushMessage(ctx context.Context, queueName string, msg *core.Message, delaySeconds int) (string, error) {
 	q, err := GetQueue(queueName)
 	if err != nil {
@@ -48,6 +56,7 @@ func PushMessage(ctx context.Context, queueName string, msg *core.Message, delay
 	return q.PushMessage(ctx, msg, delaySeconds)
 }
 
+// setDefaultWithWarn swaps the global server and warns on overwrite.
 func setDefaultWithWarn(s *Server) {
 	old := defaultServer.Swap(s)
 	if old != nil {

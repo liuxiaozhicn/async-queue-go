@@ -33,7 +33,10 @@ type Config struct {
 	Queues map[string]QueueConfig `json:"queues" yaml:"queues"`
 }
 
-// LoadConfig loads configuration from a JSON file.
+// LoadConfig loads queue configuration from JSON or YAML file.
+//
+// It also applies default values for missing queue fields (timeouts, attempts,
+// retry policy, process/concurrency counts and shutdown timeout).
 func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

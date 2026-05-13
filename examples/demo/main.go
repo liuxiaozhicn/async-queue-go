@@ -11,14 +11,17 @@ import (
 	"github.com/redis/go-redis/v9"
 	"log"
 	"math/rand"
-	"os"
 	"os/signal"
-	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 )
+
+const (
+	queueName = "order"
+)
+
+var ErrUnknownProcessing = errors.New("unknown order processing error")
 
 // OrderJob handles order creation.
 type OrderJob struct {
@@ -27,60 +30,22 @@ type OrderJob struct {
 	TotalAmount float64 `json:"total_amount"`
 }
 
-func (j *OrderJob) GetType() string { return "order" }
-
 // OrderJobHandler handles order creation.
 type OrderJobHandler struct {
-	mode demoResultMode
-	seq  atomic.Uint64
-}
-
-type demoResultMode string
-
-const (
-	modeAck     demoResultMode = "ack"
-	modeRetry   demoResultMode = "retry"
-	modeRequeue demoResultMode = "requeue"
-	modeDrop    demoResultMode = "drop"
-	modeError   demoResultMode = "error"
-	modeMixed   demoResultMode = "mixed"
-)
-
-func parseDemoResultMode(v string) demoResultMode {
-	switch demoResultMode(strings.ToLower(strings.TrimSpace(v))) {
-	case modeAck, modeRetry, modeRequeue, modeDrop, modeError, modeMixed:
-		return demoResultMode(strings.ToLower(strings.TrimSpace(v)))
-	default:
-		return modeMixed
-	}
 }
 
 func (h *OrderJobHandler) nextResult() (core.Result, error) {
-	switch h.mode {
-	case modeAck:
+	switch rand.Intn(5) {
+	case 0:
 		return core.ACK, nil
-	case modeRetry:
+	case 1:
 		return core.RETRY, nil
-	case modeRequeue:
+	case 2:
 		return core.REQUEUE, nil
-	case modeDrop:
+	case 3:
 		return core.DROP, nil
-	case modeError:
-		return core.ACK, errors.New("demo forced error")
 	default:
-		n := h.seq.Add(1)
-		switch n % 5 {
-		case 1:
-			return core.ACK, nil
-		case 2:
-			return core.RETRY, nil
-		case 3:
-			return core.REQUEUE, nil
-		case 4:
-			return core.DROP, nil
-		default:
-			return core.ACK, errors.New("demo forced error")
-		}
+		return "", ErrUnknownProcessing
 	}
 }
 
@@ -111,9 +76,9 @@ func main() {
 
 	queueCfg := &asyncqueue.Config{
 		Queues: map[string]asyncqueue.QueueConfig{
-			"order": {
+			queueName: {
 				Driver:          "redis",
-				Channel:         "queue:demo",
+				Channel:         "queue:order",
 				Enabled:         true,
 				PopTimeout:      1,
 				HandleTimeout:   180,
@@ -131,9 +96,6 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	resultMode := parseDemoResultMode(os.Getenv("DEMO_RESULT_MODE"))
-	log.Printf("[Main] DEMO_RESULT_MODE=%s", resultMode)
-
 	s, err := asyncqueue.NewServer(queueCfg, asyncqueue.WithDriver("redis", queue.NewRedisDriver(client)))
 	if err != nil {
 		log.Fatalf("[Main] failed to load server: %v", err)
@@ -146,20 +108,8 @@ func main() {
 	go func() {
 		defer wg.Done()
 		serveMux := asyncqueue.NewServeMux()
-		orderJob := &OrderJob{}
-
-		orderJobHandler := &OrderJobHandler{mode: resultMode}
-		// 1.queue.HandlerFunc func
-		//serveMux.Register(orderJob.GetType(), queue.HandlerFunc(func(ctx context.Context, m *core.Message) (core.Result, error) {
-		//	job := &OrderJob{}
-		//	_ = json.Unmarshal(m.Payload, job)
-		//	log.Printf("[OrderJob] processing order #%d for user %d, total: %.2f", job.OrderID, job.UserID, job.TotalAmount)
-		//	time.Sleep(10 * time.Second)
-		//	log.Printf("[OrderJob] order #%d handled successfully", job.OrderID)
-		//	return core.ACK, nil
-		//}))
-		// 2.queue.Handler interface
-		serveMux.Handle(orderJob.GetType(), orderJobHandler)
+		orderJobHandler := &OrderJobHandler{}
+		serveMux.Handle(queueName, orderJobHandler)
 		if err := s.Run(ctx, serveMux); err != nil {
 			log.Fatalf("server run failed: %v", err)
 		}
@@ -174,7 +124,7 @@ func main() {
 		defer wg.Done()
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
-		queue, _ := s.Queue("order")
+		queue, _ := s.Queue(queueName)
 		for {
 			select {
 			case <-ctx.Done():

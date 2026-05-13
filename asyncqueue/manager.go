@@ -12,7 +12,10 @@ import (
 	iworker "github.com/liuxiaozhicn/async-queue-go/pkg/worker"
 )
 
-// Manager manages workers for multiple queues.
+// Manager manages queue runtime lifecycle for multiple configured queues.
+//
+// It owns worker startup/shutdown orchestration, forwarder processes, driver registry
+// and aggregated error reporting across queue/process dimensions.
 type Manager struct {
 	config     *Config
 	serveMux   *ServeMux
@@ -32,11 +35,14 @@ type Manager struct {
 	started bool
 }
 
-// NewManager creates a manager.
+// NewManager creates a manager with validated dependencies.
+//
+// config and serveMux are required; logger falls back to default when nil.
 func NewManager(config *Config, serveMux *ServeMux, l logger.Interface) (*Manager, error) {
 	return newManager(config, serveMux, l)
 }
 
+// newManager initializes internal state and cancellation context.
 func newManager(config *Config, serveMux *ServeMux, l logger.Interface) (*Manager, error) {
 	if config == nil {
 		return nil, errors.New("config is nil")
@@ -63,6 +69,9 @@ func newManager(config *Config, serveMux *ServeMux, l logger.Interface) (*Manage
 }
 
 // RegisterDriver registers a prepared driver instance by driver name.
+//
+// queue configs reference this name via QueueConfig.Driver.
+// Register should be called before StartWorker.
 func (m *Manager) RegisterDriver(driverName string, d iqueue.Driver) {
 	if m == nil || driverName == "" || d == nil {
 		return
@@ -73,10 +82,18 @@ func (m *Manager) RegisterDriver(driverName string, d iqueue.Driver) {
 }
 
 // RegisterQueueDriver is kept for backward compatibility.
+//
+// It is an alias of RegisterDriver.
 func (m *Manager) RegisterQueueDriver(queueName string, d iqueue.Driver) {
 	m.RegisterDriver(queueName, d)
 }
 
+// checkStartWorkerOptions validates runtime prerequisites before worker startup.
+//
+// For each enabled queue:
+// - a handler must be registered in ServeMux
+// - QueueConfig.Driver must be non-empty
+// - the named driver must already be registered
 func (m *Manager) checkStartWorkerOptions() error {
 	for queueName, queueCfg := range m.config.Queues {
 		if !queueCfg.Enabled {
@@ -99,7 +116,10 @@ func (m *Manager) checkStartWorkerOptions() error {
 	return nil
 }
 
-// StartWorker starts workers for all enabled queues.
+// StartWorker starts forwarders and consumers for all enabled queues.
+//
+// This method is idempotency-protected by m.started and returns error when called twice.
+// On partial startup failure it rolls back created workers/queues and returns the first startup error.
 func (m *Manager) StartWorker() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -209,7 +229,10 @@ func (m *Manager) StartWorker() error {
 	return nil
 }
 
-// Stop stops all queue workers.
+// Stop requests shutdown and waits until all goroutines exit or timeout is reached.
+//
+// timeout <= 0 means wait indefinitely.
+// It also closes queue facades and returns aggregated worker errors, if any.
 func (m *Manager) Stop(timeout time.Duration) error {
 	m.mu.RLock()
 	started := m.started
@@ -246,13 +269,17 @@ func (m *Manager) Stop(timeout time.Duration) error {
 	return m.runErrors()
 }
 
-// Wait waits for all workers to finish.
+// Wait blocks until all manager-managed goroutines exit.
+//
+// It does not initiate cancellation by itself; caller should coordinate lifecycle via Stop/Run context.
 func (m *Manager) Wait() error {
 	m.wg.Wait()
 	return m.runErrors()
 }
 
-// Run starts the manager and stops it when the context is canceled.
+// Run starts workers and blocks until completion or context cancellation.
+//
+// When ctx is canceled, Run invokes Stop(shutdownTimeout) to perform graceful shutdown.
 func (m *Manager) Run(ctx context.Context, shutdownTimeout time.Duration) error {
 	if err := m.StartWorker(); err != nil {
 		return err
@@ -272,7 +299,10 @@ func (m *Manager) Run(ctx context.Context, shutdownTimeout time.Duration) error 
 	}
 }
 
-// GetQueue returns the queue instance for publishing messages.
+// GetQueue returns a started queue facade by logical queue name.
+//
+// The returned queue can be used to publish/cancel/query messages.
+// Returns error when queue is not enabled or not started.
 func (m *Manager) GetQueue(name string) (*Queue, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -283,6 +313,9 @@ func (m *Manager) GetQueue(name string) (*Queue, error) {
 	return q, nil
 }
 
+// recordError stores one worker error by queue and process ID.
+//
+// New errors overwrite previous error for the same key.
 func (m *Manager) recordError(queueName string, processID int, err error) {
 	m.errMu.Lock()
 	defer m.errMu.Unlock()
@@ -290,6 +323,9 @@ func (m *Manager) recordError(queueName string, processID int, err error) {
 	m.errors[key] = err
 }
 
+// runErrors joins recorded worker errors into one error value.
+//
+// Returns nil when no worker errors were recorded.
 func (m *Manager) runErrors() error {
 	m.errMu.Lock()
 	defer m.errMu.Unlock()
@@ -302,6 +338,10 @@ func (m *Manager) runErrors() error {
 	}
 	return fmt.Errorf("[Async-Queue-Manager] %d error(s): %w", len(errs), errors.Join(errs...))
 }
+
+// rollbackStartLocked undoes partial startup while m.mu is already held.
+//
+// It cancels manager context, waits background goroutines, closes queues, and resets maps/flags.
 func (m *Manager) rollbackStartLocked() {
 	if m.cancel != nil {
 		m.cancel()
@@ -319,6 +359,9 @@ func (m *Manager) rollbackStartLocked() {
 	m.started = false
 }
 
+// closeQueuesLocked closes and removes all queue instances.
+//
+// Caller must hold m.mu.
 func (m *Manager) closeQueuesLocked() {
 	for name, q := range m.queues {
 		_ = q.Close()
@@ -326,7 +369,10 @@ func (m *Manager) closeQueuesLocked() {
 	}
 }
 
-// runWorkerWithAutoRestart runs a worker and automatically restarts it when it exits normally.
+// runWorkerWithAutoRestart runs one consumer worker in auto-restart mode.
+//
+// It recreates worker instances after normal exit (for max_messages style rolling restart),
+// and terminates when manager context is canceled.
 func (m *Manager) runWorkerWithAutoRestart(queueName string, processID int, w *iworker.Worker, q *Queue, handler iqueue.Handler, cfg QueueConfig) {
 	defer m.wg.Done()
 	restartCount := 0

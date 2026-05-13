@@ -1,7 +1,7 @@
 package asyncqueue
 
-// Job is the interface that every job struct must implement.
-// GetType returns the queue name this job is bound to.
+// Job is a marker interface for enqueue payload structs.
+//
+// Any JSON-marshalable struct can be used as a job payload.
 type Job interface {
-	GetType() string
 }
