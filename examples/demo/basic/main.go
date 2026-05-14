@@ -53,7 +53,7 @@ func (h *OrderTaskHandler) Handle(ctx context.Context, m *core.Message) (core.Re
 	job := &OrderTask{}
 	_ = json.Unmarshal(m.Payload, job)
 
-	duration := time.Duration(60+rand.Intn(100)) * time.Second
+	duration := time.Duration(60+rand.Intn(60)) * time.Second
 	select {
 	case <-time.After(duration):
 		return h.nextResult()
