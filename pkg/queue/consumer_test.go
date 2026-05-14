@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"errors"
+	"io"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -15,6 +16,7 @@ import (
 type fakeDriver struct {
 	mu sync.Mutex
 
+	popErrs  []error
 	popItems []struct {
 		data string
 		msg  *core.Message
@@ -45,6 +47,11 @@ func (f *fakeDriver) Cancel(context.Context, string, string) (bool, error) { ret
 func (f *fakeDriver) Pop(context.Context, string, time.Duration, time.Duration) (string, *core.Message, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if len(f.popErrs) > 0 {
+		err := f.popErrs[0]
+		f.popErrs = f.popErrs[1:]
+		return "", nil, err
+	}
 	if len(f.popItems) == 0 {
 		return "", nil, nil
 	}
@@ -427,5 +434,109 @@ func TestConsumerShutdownDrainsInFlight(t *testing.T) {
 	}
 	if d.ackCalls != 2 {
 		t.Fatalf("expected in-flight messages to drain, got ack=%d", d.ackCalls)
+	}
+}
+
+func TestConsumerRunRetriesTransientPopErrors(t *testing.T) {
+	d := &fakeDriver{
+		popErrs: []error{
+			errors.New("dial tcp 127.0.0.1:6379: connect: connection refused"),
+			errors.New("i/o timeout"),
+		},
+		popItems: []struct {
+			data string
+			msg  *core.Message
+		}{
+			{data: "a", msg: core.NewMessage([]byte(`{}`), 2)},
+		},
+	}
+
+	c := NewConsumer(d, "test", HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
+		return core.ACK, nil
+	}),
+		WithConsumerConcurrentLimit(1),
+		WithConsumerAutoRestart(true),
+		WithConsumerMaxMessages(1),
+		WithConsumerPopRetryBackoff(time.Millisecond),
+		WithConsumerPopRetryMaxBackoff(2*time.Millisecond),
+		WithConsumerProcessID(1),
+		WithConsumerHandleTimeout(2*time.Second),
+		WithConsumerLogger(logger.Default.LogMode(logger.Silent)),
+	)
+
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if d.ackCalls != 1 {
+		t.Fatalf("expected consumer to recover and ack message, got ack=%d", d.ackCalls)
+	}
+	stats := c.Stats()
+	if stats.Processed != 1 {
+		t.Fatalf("expected processed=1 after recovery, got %+v", stats)
+	}
+}
+
+func TestConsumerRunReturnsFatalPopError(t *testing.T) {
+	d := &fakeDriver{
+		popErrs: []error{errors.New("unexpected pop result type")},
+	}
+
+	c := NewConsumer(d, "test", HandlerFunc(func(context.Context, *core.Message) (core.Result, error) {
+		return core.ACK, nil
+	}),
+		WithConsumerConcurrentLimit(1),
+		WithConsumerProcessID(1),
+		WithConsumerHandleTimeout(2*time.Second),
+		WithConsumerLogger(logger.Default.LogMode(logger.Silent)),
+	)
+
+	err := c.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected fatal pop error")
+	}
+	re, ok := err.(*ConsumerRunError)
+	if !ok {
+		t.Fatalf("expected ConsumerRunError, got %T", err)
+	}
+	if re.Count != 1 {
+		t.Fatalf("expected error count=1, got %d", re.Count)
+	}
+	if re.First == nil || re.First.Error() != "unexpected pop result type" {
+		t.Fatalf("unexpected first error: %#v", re.First)
+	}
+}
+
+func TestIsRetryablePopError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "nil", err: nil, want: false},
+		{name: "context canceled", err: context.Canceled, want: false},
+		{name: "context deadline exceeded", err: context.DeadlineExceeded, want: false},
+		{name: "eof", err: io.EOF, want: true},
+		{name: "unexpected eof", err: io.ErrUnexpectedEOF, want: true},
+		{name: "connection refused", err: errors.New("dial tcp 127.0.0.1:6379: connect: connection refused"), want: true},
+		{name: "read only", err: errors.New("READONLY You can't write against a read only replica."), want: true},
+		{name: "readonly with err prefix", err: errors.New("ERR READONLY You can't write against a read only replica."), want: true},
+		{name: "loading", err: errors.New("LOADING Redis is loading the dataset in memory"), want: true},
+		{name: "clusterdown", err: errors.New("CLUSTERDOWN Hash slot not served"), want: true},
+		{name: "tryagain", err: errors.New("TRYAGAIN Multiple keys request during rehashing of slot"), want: true},
+		{name: "masterdown", err: errors.New("MASTERDOWN Link with MASTER is down and replica-serve-stale-data is set to 'no'"), want: true},
+		{name: "busy script", err: errors.New("BUSY Redis is busy running a script. You can only call SCRIPT KILL or SHUTDOWN NOSAVE."), want: true},
+		{name: "client paused", err: errors.New("CLIENT PAUSED Write commands are paused"), want: true},
+		{name: "max clients", err: errors.New("ERR max number of clients reached"), want: true},
+		{name: "wrongpass", err: errors.New("WRONGPASS invalid username-password pair"), want: false},
+		{name: "oom", err: errors.New("OOM command not allowed when used memory > 'maxmemory'."), want: false},
+		{name: "crossslot", err: errors.New("CROSSSLOT Keys in request don't hash to the same slot"), want: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isRetryablePopError(tc.err); got != tc.want {
+				t.Fatalf("isRetryablePopError(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }

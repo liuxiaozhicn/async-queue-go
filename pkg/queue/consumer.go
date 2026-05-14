@@ -2,7 +2,10 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -70,6 +73,8 @@ type Consumer struct {
 	maxMessages         int
 	PopTimeout          time.Duration
 	handleTimeout       time.Duration
+	popRetryBackoff     time.Duration
+	popRetryMaxBackoff  time.Duration
 	retrySeconds        []int
 	messageTTL          int
 	handleTimeoutAction string
@@ -99,22 +104,27 @@ func NewConsumer(driver Driver, channel string, handler Handler, opts ...Consume
 			opt(&consumerOptions)
 		}
 	}
+	if consumerOptions.popRetryMaxBackoff < consumerOptions.popRetryBackoff {
+		consumerOptions.popRetryMaxBackoff = consumerOptions.popRetryBackoff
+	}
 
 	return &Consumer{
-		driver:          driver,
-		channel:         channel,
-		handler:         handler,
-		concurrentLimit: consumerOptions.concurrentLimit,
-		autoRestart:     consumerOptions.autoRestart,
-		maxMessages:     consumerOptions.maxMessages,
-		PopTimeout:      consumerOptions.PopTimeout,
-		handleTimeout:   consumerOptions.handleTimeout,
-		retrySeconds:    append([]int(nil), consumerOptions.retrySeconds...),
-		messageTTL:      consumerOptions.messageTTL,
-		hooks:           consumerOptions.hooks,
-		logger:          consumerOptions.logger,
-		name:            consumerOptions.name,
-		processID:       consumerOptions.processID,
+		driver:             driver,
+		channel:            channel,
+		handler:            handler,
+		concurrentLimit:    consumerOptions.concurrentLimit,
+		autoRestart:        consumerOptions.autoRestart,
+		maxMessages:        consumerOptions.maxMessages,
+		PopTimeout:         consumerOptions.PopTimeout,
+		handleTimeout:      consumerOptions.handleTimeout,
+		popRetryBackoff:    consumerOptions.popRetryBackoff,
+		popRetryMaxBackoff: consumerOptions.popRetryMaxBackoff,
+		retrySeconds:       append([]int(nil), consumerOptions.retrySeconds...),
+		messageTTL:         consumerOptions.messageTTL,
+		hooks:              consumerOptions.hooks,
+		logger:             consumerOptions.logger,
+		name:               consumerOptions.name,
+		processID:          consumerOptions.processID,
 	}
 }
 
@@ -135,6 +145,7 @@ func (c *Consumer) Stats() ConsumerStats {
 func (c *Consumer) Run(ctx context.Context) error {
 	sem := make(chan struct{}, c.concurrentLimit)
 	var wg sync.WaitGroup
+	popRetryBackoff := newBackoff(c.popRetryBackoff, c.popRetryMaxBackoff)
 
 	count := 0
 	for {
@@ -159,11 +170,23 @@ func (c *Consumer) Run(ctx context.Context) error {
 				c.logger.Info(ctx, "[Consumer:%s:%d] running jobs done, consumer shutdown complete ", c.name, c.processID)
 				return c.runErr()
 			}
+			if isRetryablePopError(err) {
+				c.logger.Warn(ctx, "[Consumer:%s:%d] Pop retryable error, retrying in %s: %v", c.name, c.processID, popRetryBackoff.Current(), err)
+				if err := waitForPopRetryBackoff(ctx, popRetryBackoff.Current()); err != nil {
+					c.logger.Info(ctx, "[Consumer:%s:%d] context cancelled during pop retry backoff, waiting for running jobs to finish...", c.name, c.processID)
+					wg.Wait()
+					c.logger.Info(ctx, "[Consumer:%s:%d] running jobs done, consumer shutdown complete ", c.name, c.processID)
+					return c.runErr()
+				}
+				popRetryBackoff.Advance()
+				continue
+			}
 			c.logger.Error(ctx, "[Consumer:%s:%d] Pop error: %v", c.name, c.processID, err)
 			c.recordErr(err)
 			wg.Wait()
 			return c.runErr()
 		}
+		popRetryBackoff.Reset()
 		if messageID == "" || message == nil {
 			continue
 		}
@@ -195,13 +218,16 @@ func (c *Consumer) incrErrors(err error) {
 		return
 	}
 	atomic.AddInt64(&c.errors, 1)
+	c.errMu.Lock()
+	if c.concurrentErr == nil {
+		c.concurrentErr = err
+	}
+	c.errMu.Unlock()
 }
 
 // recordErr stores first concurrent fatal error.
 func (c *Consumer) recordErr(err error) {
-	c.errMu.Lock()
-	defer c.errMu.Unlock()
-	c.concurrentErr = err
+	c.incrErrors(err)
 }
 
 // runErr builds aggregated run error from internal counters and first error.
@@ -363,4 +389,67 @@ func (c *Consumer) handleError(ctx context.Context, messageID string, message *c
 		c.hooks.OnFail(ctx, message)
 	}
 	return nil
+}
+
+func waitForPopRetryBackoff(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return ctx.Err()
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func isRetryablePopError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+
+	var timeoutErr interface{ Timeout() bool }
+	if errors.As(err, &timeoutErr) {
+		return true
+	}
+
+	msg := normalizeRedisError(err)
+	switch {
+	case msg == "MAX NUMBER OF CLIENTS REACHED",
+		strings.HasPrefix(msg, "LOADING "),
+		strings.HasPrefix(msg, "READONLY "),
+		strings.HasPrefix(msg, "CLUSTERDOWN "),
+		strings.HasPrefix(msg, "TRYAGAIN "),
+		strings.HasPrefix(msg, "MASTERDOWN "),
+		strings.HasPrefix(msg, "BUSY "),
+		strings.HasPrefix(msg, "CLIENT PAUSED "),
+		strings.Contains(msg, "CONNECTION REFUSED"),
+		strings.Contains(msg, "CONNECTION RESET"),
+		strings.Contains(msg, "BROKEN PIPE"),
+		strings.Contains(msg, "I/O TIMEOUT"),
+		strings.Contains(msg, "NO ROUTE TO HOST"),
+		strings.Contains(msg, "NETWORK IS UNREACHABLE"),
+		strings.Contains(msg, "USE OF CLOSED NETWORK CONNECTION"),
+		strings.Contains(msg, "EOF"):
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeRedisError(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := strings.TrimSpace(err.Error())
+	msg = strings.TrimPrefix(msg, "ERR ")
+	return strings.ToUpper(msg)
 }

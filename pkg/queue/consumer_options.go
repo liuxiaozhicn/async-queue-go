@@ -11,28 +11,32 @@ const defaultConsumerMessageTTLSeconds = 10 * 24 * 60 * 60
 type ConsumerOption func(*consumerOptions)
 
 type consumerOptions struct {
-	concurrentLimit int
-	autoRestart     bool
-	maxMessages     int
-	PopTimeout      time.Duration
-	handleTimeout   time.Duration
-	retrySeconds    []int
-	messageTTL      int
-	hooks           ConsumerHooks
-	name            string
-	processID       int
-	logger          logger.Interface
+	concurrentLimit    int
+	autoRestart        bool
+	maxMessages        int
+	PopTimeout         time.Duration
+	handleTimeout      time.Duration
+	popRetryBackoff    time.Duration
+	popRetryMaxBackoff time.Duration
+	retrySeconds       []int
+	messageTTL         int
+	hooks              ConsumerHooks
+	name               string
+	processID          int
+	logger             logger.Interface
 }
 
 // defaultConsumerOptions returns baseline runtime options for consumers.
 func defaultConsumerOptions() consumerOptions {
 	return consumerOptions{
-		concurrentLimit: 10,
-		PopTimeout:      1 * time.Second,
-		handleTimeout:   180 * time.Second,
-		retrySeconds:    []int{30, 90, 180, 300},
-		messageTTL:      defaultConsumerMessageTTLSeconds,
-		logger:          logger.Default,
+		concurrentLimit:    10,
+		PopTimeout:         1 * time.Second,
+		handleTimeout:      180 * time.Second,
+		popRetryBackoff:    1 * time.Second,
+		popRetryMaxBackoff: 30 * time.Second,
+		retrySeconds:       []int{30, 90, 180, 300},
+		messageTTL:         defaultConsumerMessageTTLSeconds,
+		logger:             logger.Default,
 	}
 }
 
@@ -77,6 +81,44 @@ func WithConsumerHandleTimeout(timeout time.Duration) ConsumerOption {
 			o.handleTimeout = timeout
 		}
 	}
+}
+
+// WithConsumerPopRetryBackoff sets the initial backoff for retryable Pop errors.
+func WithConsumerPopRetryBackoff(interval time.Duration) ConsumerOption {
+	return func(o *consumerOptions) {
+		if interval > 0 {
+			o.popRetryBackoff = interval
+		}
+	}
+}
+
+// WithConsumerPopRetryMaxBackoff sets the max backoff for retryable Pop errors.
+func WithConsumerPopRetryMaxBackoff(interval time.Duration) ConsumerOption {
+	return func(o *consumerOptions) {
+		if interval > 0 {
+			o.popRetryMaxBackoff = interval
+		}
+	}
+}
+
+// Deprecated: use WithConsumerPopRetryBackoff.
+func WithConsumerPopRetryDelay(interval time.Duration) ConsumerOption {
+	return WithConsumerPopRetryBackoff(interval)
+}
+
+// Deprecated: use WithConsumerPopRetryMaxBackoff.
+func WithConsumerPopRetryMaxDelay(interval time.Duration) ConsumerOption {
+	return WithConsumerPopRetryMaxBackoff(interval)
+}
+
+// Deprecated: use WithConsumerPopRetryBackoff.
+func WithConsumerErrorInterval(interval time.Duration) ConsumerOption {
+	return WithConsumerPopRetryBackoff(interval)
+}
+
+// Deprecated: use WithConsumerPopRetryMaxBackoff.
+func WithConsumerErrorMaxInterval(interval time.Duration) ConsumerOption {
+	return WithConsumerPopRetryMaxBackoff(interval)
 }
 
 // WithConsumerRetrySeconds sets retry delay sequence by attempt index.
