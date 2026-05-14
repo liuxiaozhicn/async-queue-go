@@ -17,7 +17,6 @@ It provides:
 - Concurrent consumers with auto-restart support
 - Atomic queue-state transitions via Redis Lua scripts, with timeout recovery (`reserved -> timeout`) and at-least-once delivery semantics
 - Queue management APIs for info, delete, retry, reload, and flush
-- JSON / YAML configuration support
 - Graceful shutdown support
 
 ## Reliability Highlights

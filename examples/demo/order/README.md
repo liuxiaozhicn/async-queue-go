@@ -1,4 +1,4 @@
-# Scenario 1: Order + Payment Callback
+#  Order + Payment Callback
 
 This demo keeps only 2 business routes:
 
