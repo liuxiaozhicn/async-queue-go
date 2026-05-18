@@ -35,7 +35,26 @@ func newDriverForTest(t *testing.T) (*RedisDriver, *fakeClock, func()) {
 		client,
 		WithRedisDriverClock(fc),
 	)
+	clean := func() {
+		keys := NewKeys(testChannel)
+		_ = client.Del(
+			context.Background(),
+			keys.Waiting,
+			keys.Reserved,
+			keys.Delayed,
+			keys.Timeout,
+			keys.Failed,
+			keys.SequenceKey,
+			keys.SequenceEpoch,
+		).Err()
+		messageKeys, err := client.Keys(context.Background(), keys.MessagePrefix+"*").Result()
+		if err == nil && len(messageKeys) > 0 {
+			_ = client.Del(context.Background(), messageKeys...).Err()
+		}
+	}
+	clean()
 	cleanup := func() {
+		clean()
 		_ = client.Close()
 	}
 	return d, fc, cleanup
@@ -141,6 +160,44 @@ func TestPopAckFailMove(t *testing.T) {
 	info, _ = d.Info(ctx, testChannel)
 	if info.Failed != 1 || info.Reserved != 0 {
 		t.Fatalf("unexpected fail info: %+v", info)
+	}
+}
+
+func TestRequeueMovesReservedMessageBackToWaiting(t *testing.T) {
+	d, _, done := newDriverForTest(t)
+	defer done()
+	ctx := context.Background()
+
+	m := mustMessage(t, 3)
+	if err := d.Push(ctx, testChannel, m, 0, 120); err != nil {
+		t.Fatal(err)
+	}
+	messageID, _, err := d.Pop(ctx, testChannel, time.Second, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if messageID == "" {
+		t.Fatal("expected message id")
+	}
+
+	if err := d.Requeue(ctx, testChannel, messageID); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := d.Info(ctx, testChannel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Reserved != 0 || info.Waiting != 1 {
+		t.Fatalf("expected reserved=0 waiting=1 after requeue, got %+v", info)
+	}
+
+	msg, err := d.Get(ctx, testChannel, messageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.Status != core.StatusWaiting {
+		t.Fatalf("expected waiting status, got %s", msg.Status)
 	}
 }
 
